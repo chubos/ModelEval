@@ -52,7 +52,7 @@ export function Layout() {
 
         <div className="border-t border-arena-border p-4">
           <p className="text-[11px] leading-relaxed text-arena-dim">
-            Blind pairwise evaluation · Rubryka ważona · Mock SQLite
+            Blind pairwise · Rubryka ważona · API + SQLite
           </p>
         </div>
       </aside>

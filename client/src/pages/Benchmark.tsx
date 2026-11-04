@@ -1,13 +1,7 @@
-import { useMemo, useState } from 'react'
-import {
-  Download,
-  Filter,
-  Plus,
-  Search,
-  Table2,
-  Upload,
-} from 'lucide-react'
-import { benchmarkTasks as initialTasks, categoryLabels } from '../data/mockData'
+import { useEffect, useMemo, useState } from 'react'
+import { Download, Filter, Loader2, Plus, Search, Table2, Upload } from 'lucide-react'
+import { api } from '../api/client'
+import { categoryLabels } from '../data/labels'
 import type { BenchmarkTask, TaskCategory } from '../types'
 import { Badge, Button, Card, CardHeader } from '../components/ui'
 import { exportCSV, exportJSON } from '../utils/export'
@@ -16,11 +10,30 @@ import { cn } from '../utils/cn'
 const categories = Object.keys(categoryLabels) as TaskCategory[]
 
 export function Benchmark() {
-  const [tasks, setTasks] = useState(initialTasks)
+  const [tasks, setTasks] = useState<BenchmarkTask[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState<TaskCategory | 'all'>('all')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draft, setDraft] = useState<Partial<BenchmarkTask>>({})
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const list = await api.tasks.list()
+        if (!cancelled) setTasks(list)
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : 'Błąd API')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const filtered = useMemo(() => {
     return tasks.filter((t) => {
@@ -40,40 +53,37 @@ export function Benchmark() {
     setDraft({ ...task })
   }
 
-  const saveEdit = () => {
+  const saveEdit = async () => {
     if (!editingId) return
-    setTasks((prev) =>
-      prev.map((t) => (t.id === editingId ? ({ ...t, ...draft } as BenchmarkTask) : t)),
-    )
+    const updated = await api.tasks.update(editingId, draft)
+    setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)))
     setEditingId(null)
   }
 
-  const addTask = () => {
-    const id = `task-${String(tasks.length + 1).padStart(3, '0')}`
-    const task: BenchmarkTask = {
-      id,
+  const addTask = async () => {
+    const task = await api.tasks.create({
       title: 'Nowe zadanie',
       content: 'Treść pytania…',
       category: 'wiedza',
       criteria: 'Kryteria poprawności…',
       expectedElements: ['element 1'],
       difficulty: 2,
-    }
+    })
     setTasks((prev) => [task, ...prev])
     startEdit(task)
   }
 
-  const importDemo = () => {
-    const extra: BenchmarkTask = {
-      id: `task-${String(tasks.length + 1).padStart(3, '0')}`,
+  const importDemo = async () => {
+    const task = await api.tasks.create({
       title: 'Import CSV — przykładowe zadanie',
-      content: 'Wyjaśnij różnicę między precision a recall w jednym akapicie z przykładem.',
+      content:
+        'Wyjaśnij różnicę między precision a recall w jednym akapicie z przykładem.',
       category: 'wiedza',
       criteria: 'Obie definicje + przykład TP/FP/FN.',
       expectedElements: ['precision', 'recall', 'przykład'],
       difficulty: 2,
-    }
-    setTasks((prev) => [extra, ...prev])
+    })
+    setTasks((prev) => [task, ...prev])
   }
 
   const counts = useMemo(() => {
@@ -81,6 +91,16 @@ export function Benchmark() {
     for (const t of tasks) map[t.category] = (map[t.category] ?? 0) + 1
     return map
   }, [tasks])
+
+  if (loading) {
+    return (
+      <div className="flex h-64 items-center justify-center gap-2 text-arena-muted">
+        <Loader2 className="h-5 w-5 animate-spin" /> Ładowanie benchmarku…
+      </div>
+    )
+  }
+
+  if (error) return <div className="p-6 text-arena-danger">{error}</div>
 
   return (
     <div className="animate-fade-in space-y-6 p-6">
@@ -91,21 +111,15 @@ export function Benchmark() {
           </div>
           <div>
             <h1 className="text-xl font-semibold text-arena-text">Zarządzanie benchmarkiem</h1>
-            <p className="text-sm text-arena-muted">
-              Import, edycja i kategoryzacja zadań ewaluacyjnych
-            </p>
+            <p className="text-sm text-arena-muted">CRUD zadań w SQLite</p>
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" onClick={importDemo}>
+          <Button variant="outline" size="sm" onClick={() => void importDemo()}>
             <Upload className="h-3.5 w-3.5" />
             Import CSV
           </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => exportJSON('benchmark-tasks.json', tasks)}
-          >
+          <Button variant="outline" size="sm" onClick={() => exportJSON('benchmark-tasks.json', tasks)}>
             <Download className="h-3.5 w-3.5" />
             JSON
           </Button>
@@ -129,7 +143,7 @@ export function Benchmark() {
             <Download className="h-3.5 w-3.5" />
             CSV
           </Button>
-          <Button size="sm" onClick={addTask}>
+          <Button size="sm" onClick={() => void addTask()}>
             <Plus className="h-3.5 w-3.5" />
             Dodaj zadanie
           </Button>
@@ -318,7 +332,7 @@ export function Benchmark() {
                     <td className="px-5 py-3">
                       {isEditing ? (
                         <div className="flex gap-1">
-                          <Button size="sm" onClick={saveEdit}>
+                          <Button size="sm" onClick={() => void saveEdit()}>
                             Zapisz
                           </Button>
                           <Button size="sm" variant="ghost" onClick={() => setEditingId(null)}>

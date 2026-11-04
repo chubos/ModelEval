@@ -1,29 +1,36 @@
 # ModelEval Arena
 
-Aplikacja webowa do oceny, testowania i porównywania odpowiedzi modeli AI — inspirowana LMSYS Chatbot Arena.
+Ocena i porównywanie odpowiedzi modeli AI (inspiracja: LMSYS Chatbot Arena).
 
-## Stack
-
-- React 19 + TypeScript + Vite
-- Tailwind CSS v4
-- React Router
-- Recharts
-- Lucide React
+```
+LLM/
+├── client/   # React + Vite + Tailwind
+└── server/   # Express + SQLite
+```
 
 ## Uruchomienie
+
+Z katalogu głównego:
 
 ```bash
 npm install
 npm run dev
 ```
 
-## Widoki
+- Client: http://localhost:5173  
+- API: http://localhost:3001  
 
-| Ścieżka | Opis |
-|---------|------|
-| `/` | Arena porównawcza (blind pairwise + rubryka) |
-| `/experiments` | Konfiguracja eksperymentów i warianty promptów A/B/C |
-| `/benchmark` | Zarządzanie zadaniami benchmarku |
-| `/dashboard` | Leaderboard, wykresy, eksport CSV/JSON |
+Osobno:
 
-Dane pochodzą z mocków symulujących zapisaną bazę (SQLite-like).
+```bash
+npm run dev:web   # tylko client
+npm run dev:api   # tylko server
+npm run db:reset  # wyczyść SQLite (seed przy kolejnym starcie API)
+```
+
+## Pakiety
+
+| Folder | Nazwa npm | Opis |
+|--------|-----------|------|
+| `client/` | `modeleval-client` | UI Areny, eksperymentów, benchmarku, dashboardu |
+| `server/` | `modeleval-server` | REST API + baza `server/data/modeleval.sqlite` |

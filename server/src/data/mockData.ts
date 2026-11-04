@@ -18,14 +18,6 @@ export const models: ModelInfo[] = [
   { id: 'qwen-2.5-72b', name: 'Qwen 2.5 72B', provider: 'Alibaba', color: '#615ced' },
 ]
 
-export const categoryLabels: Record<string, string> = {
-  programowanie: 'Programowanie',
-  logika: 'Logika',
-  streszczanie: 'Streszczanie',
-  instrukcje: 'Wykonywanie instrukcji',
-  wiedza: 'Wiedza ogólna',
-}
-
 export const benchmarkTasks: BenchmarkTask[] = [
   {
     id: 'task-001',

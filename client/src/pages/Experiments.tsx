@@ -1,21 +1,17 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   CheckCircle2,
   CircleDashed,
   Clock3,
   FlaskConical,
   GitBranch,
+  Loader2,
   Play,
   Plus,
   Save,
 } from 'lucide-react'
-import {
-  benchmarkTasks,
-  experiments as initialExperiments,
-  models,
-  promptVariants as initialVariants,
-} from '../data/mockData'
-import type { ExperimentConfig, PromptVariant, PromptVariantId } from '../types'
+import { api } from '../api/client'
+import type { ExperimentConfig, ModelInfo, PromptVariant, PromptVariantId, BenchmarkTask } from '../types'
 import { Badge, Button, Card, CardHeader } from '../components/ui'
 import { cn } from '../utils/cn'
 
@@ -26,11 +22,14 @@ const statusMeta = {
 }
 
 export function Experiments() {
-  const [experiments, setExperiments] = useState(initialExperiments)
-  const [variants, setVariants] = useState(initialVariants)
+  const [experiments, setExperiments] = useState<ExperimentConfig[]>([])
+  const [variants, setVariants] = useState<PromptVariant[]>([])
+  const [models, setModels] = useState<ModelInfo[]>([])
+  const [tasks, setTasks] = useState<BenchmarkTask[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [selectedVariant, setSelectedVariant] = useState<PromptVariantId>('A')
-  const [editingTemplate, setEditingTemplate] = useState(variants[0].template)
-
+  const [editingTemplate, setEditingTemplate] = useState('')
   const [form, setForm] = useState({
     name: '',
     modelIds: ['gpt-4o', 'claude-3.5'] as string[],
@@ -41,28 +40,48 @@ export function Experiments() {
     taskIds: ['task-001', 'task-007'] as string[],
   })
 
-  const activeVariant = variants.find((v) => v.id === selectedVariant)!
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const [exps, prompts, mods, tsks] = await Promise.all([
+          api.experiments.list(),
+          api.prompts.list(),
+          api.models(),
+          api.tasks.list(),
+        ])
+        if (cancelled) return
+        setExperiments(exps)
+        setVariants(prompts)
+        setModels(mods)
+        setTasks(tsks)
+        const first = prompts.find((p) => p.id === 'A') ?? prompts[0]
+        if (first) {
+          setSelectedVariant(first.id)
+          setEditingTemplate(first.template)
+        }
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : 'Błąd API')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const activeVariant = variants.find((v) => v.id === selectedVariant)
 
   const selectVariant = (id: PromptVariantId) => {
     setSelectedVariant(id)
-    const v = variants.find((x) => x.id === id)!
-    setEditingTemplate(v.template)
+    const v = variants.find((x) => x.id === id)
+    if (v) setEditingTemplate(v.template)
   }
 
-  const saveVariant = () => {
-    setVariants((prev) =>
-      prev.map((v) =>
-        v.id === selectedVariant
-          ? {
-              ...v,
-              template: editingTemplate,
-              version: v.version + 1,
-              updatedAt: new Date().toISOString(),
-              changelog: `v${v.version + 1}: ręczna edycja szablonu.`,
-            }
-          : v,
-      ),
-    )
+  const saveVariant = async () => {
+    const updated = await api.prompts.update(selectedVariant, { template: editingTemplate })
+    setVariants((prev) => prev.map((v) => (v.id === updated.id ? updated : v)))
   }
 
   const toggleModel = (id: string) => {
@@ -83,10 +102,9 @@ export function Experiments() {
     }))
   }
 
-  const createExperiment = () => {
+  const createExperiment = async () => {
     if (!form.name.trim() || form.modelIds.length < 2 || form.taskIds.length === 0) return
-    const exp: ExperimentConfig = {
-      id: `exp-${String(experiments.length + 1).padStart(3, '0')}`,
+    const exp = await api.experiments.create({
       name: form.name.trim(),
       modelIds: form.modelIds,
       promptVariant: form.promptVariant,
@@ -94,14 +112,22 @@ export function Experiments() {
       maxTokens: form.maxTokens,
       trials: form.trials,
       taskIds: form.taskIds,
-      status: 'draft',
-      createdAt: new Date().toISOString(),
-    }
+    })
     setExperiments((prev) => [exp, ...prev])
     setForm((f) => ({ ...f, name: '' }))
   }
 
-  const variantCards: PromptVariant[] = useMemo(() => variants, [variants])
+  if (loading) {
+    return (
+      <div className="flex h-64 items-center justify-center gap-2 text-arena-muted">
+        <Loader2 className="h-5 w-5 animate-spin" /> Ładowanie…
+      </div>
+    )
+  }
+
+  if (error) {
+    return <div className="p-6 text-arena-danger">{error}</div>
+  }
 
   return (
     <div className="animate-fade-in space-y-6 p-6">
@@ -113,7 +139,7 @@ export function Experiments() {
           <div>
             <h1 className="text-xl font-semibold text-arena-text">Eksperymenty i prompty</h1>
             <p className="text-sm text-arena-muted">
-              Konfiguracja przebiegów, parametry modeli i wersjonowanie wariantów A/B/C
+              Konfiguracja przebiegów — dane w SQLite
             </p>
           </div>
         </div>
@@ -123,7 +149,7 @@ export function Experiments() {
         <Card className="xl:col-span-2">
           <CardHeader
             title="Nowy eksperyment"
-            subtitle="Wybierz modele, wariant promptu i zadania benchmarku"
+            subtitle="Wybierz modele, wariant promptu i zadania"
           />
           <div className="space-y-4 p-5">
             <div>
@@ -218,7 +244,7 @@ export function Experiments() {
             <div>
               <label className="mb-1.5 block text-xs text-arena-muted">Zadania</label>
               <div className="max-h-40 space-y-1 overflow-auto rounded-lg border border-arena-border bg-arena-bg/50 p-2">
-                {benchmarkTasks.map((t) => (
+                {tasks.map((t) => (
                   <label
                     key={t.id}
                     className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs hover:bg-arena-elevated"
@@ -236,7 +262,7 @@ export function Experiments() {
               </div>
             </div>
 
-            <Button className="w-full" onClick={createExperiment}>
+            <Button className="w-full" onClick={() => void createExperiment()}>
               <Plus className="h-4 w-4" />
               Utwórz eksperyment
             </Button>
@@ -246,17 +272,18 @@ export function Experiments() {
         <Card className="xl:col-span-3">
           <CardHeader
             title="Lista eksperymentów"
-            subtitle="Historia konfiguracji (symulacja SQLite)"
-            action={
-              <Badge tone="accent">{experiments.length} zapisanych</Badge>
-            }
+            subtitle="Persistowane w SQLite"
+            action={<Badge tone="accent">{experiments.length} zapisanych</Badge>}
           />
           <div className="divide-y divide-arena-border">
             {experiments.map((exp) => {
               const meta = statusMeta[exp.status]
               const Icon = meta.icon
               return (
-                <div key={exp.id} className="flex items-start gap-4 px-5 py-4 hover:bg-arena-elevated/40">
+                <div
+                  key={exp.id}
+                  className="flex items-start gap-4 px-5 py-4 hover:bg-arena-elevated/40"
+                >
                   <div className="mt-0.5 text-arena-muted">
                     <Icon className="h-4 w-4" />
                   </div>
@@ -289,11 +316,11 @@ export function Experiments() {
                       size="sm"
                       variant="secondary"
                       onClick={() =>
-                        setExperiments((prev) =>
-                          prev.map((e) =>
-                            e.id === exp.id ? { ...e, status: 'running' } : e,
-                          ),
-                        )
+                        void api.experiments.patch(exp.id, { status: 'running' }).then((updated) => {
+                          setExperiments((prev) =>
+                            prev.map((e) => (e.id === updated.id ? updated : e)),
+                          )
+                        })
                       }
                     >
                       <Play className="h-3.5 w-3.5" />
@@ -307,60 +334,57 @@ export function Experiments() {
         </Card>
       </div>
 
-      <Card>
-        <CardHeader
-          title="Wersjonowanie promptów"
-          subtitle="Minimum trzy warianty: podstawowy, z kontekstem, ustrukturyzowany"
-          action={
-            <div className="flex items-center gap-2 text-xs text-arena-muted">
-              <GitBranch className="h-3.5 w-3.5" />
-              v{activeVariant.version}
-            </div>
-          }
-        />
-        <div className="grid gap-0 lg:grid-cols-3">
-          {variantCards.map((v) => (
-            <button
-              key={v.id}
-              type="button"
-              onClick={() => selectVariant(v.id)}
-              className={cn(
-                'border-b border-arena-border p-4 text-left transition lg:border-b-0 lg:border-r lg:last:border-r-0',
-                selectedVariant === v.id
-                  ? 'bg-arena-accent/10'
-                  : 'hover:bg-arena-elevated/50',
-              )}
-            >
-              <div className="mb-1 flex items-center gap-2">
-                <Badge tone={selectedVariant === v.id ? 'accent' : 'neutral'}>
-                  Wariant {v.id}
-                </Badge>
-                <span className="font-mono text-[10px] text-arena-dim">v{v.version}</span>
+      {activeVariant && (
+        <Card>
+          <CardHeader
+            title="Wersjonowanie promptów"
+            subtitle="Warianty A/B/C — zapis do SQLite inkrementuje wersję"
+            action={
+              <div className="flex items-center gap-2 text-xs text-arena-muted">
+                <GitBranch className="h-3.5 w-3.5" />
+                v{activeVariant.version}
               </div>
-              <div className="text-sm font-medium text-arena-text">{v.name}</div>
-              <p className="mt-1 text-xs text-arena-muted">{v.description}</p>
-            </button>
-          ))}
-        </div>
-        <div className="space-y-3 border-t border-arena-border p-5">
-          <div className="flex items-center justify-between">
-            <p className="text-xs text-arena-muted">{activeVariant.changelog}</p>
-            <Button size="sm" variant="secondary" onClick={saveVariant}>
-              <Save className="h-3.5 w-3.5" />
-              Zapisz wersję
-            </Button>
-          </div>
-          <textarea
-            value={editingTemplate}
-            onChange={(e) => setEditingTemplate(e.target.value)}
-            rows={12}
-            className="w-full rounded-xl border border-arena-border bg-arena-bg p-4 font-mono text-xs leading-relaxed text-arena-text outline-none focus:border-arena-accent"
+            }
           />
-          <p className="text-[11px] text-arena-dim">
-            Placeholdery: {'{{task}}'}, {'{{criteria}}'} — podstawiane przy generowaniu przebiegu.
-          </p>
-        </div>
-      </Card>
+          <div className="grid gap-0 lg:grid-cols-3">
+            {variants.map((v) => (
+              <button
+                key={v.id}
+                type="button"
+                onClick={() => selectVariant(v.id)}
+                className={cn(
+                  'border-b border-arena-border p-4 text-left transition lg:border-b-0 lg:border-r lg:last:border-r-0',
+                  selectedVariant === v.id ? 'bg-arena-accent/10' : 'hover:bg-arena-elevated/50',
+                )}
+              >
+                <div className="mb-1 flex items-center gap-2">
+                  <Badge tone={selectedVariant === v.id ? 'accent' : 'neutral'}>
+                    Wariant {v.id}
+                  </Badge>
+                  <span className="font-mono text-[10px] text-arena-dim">v{v.version}</span>
+                </div>
+                <div className="text-sm font-medium text-arena-text">{v.name}</div>
+                <p className="mt-1 text-xs text-arena-muted">{v.description}</p>
+              </button>
+            ))}
+          </div>
+          <div className="space-y-3 border-t border-arena-border p-5">
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-arena-muted">{activeVariant.changelog}</p>
+              <Button size="sm" variant="secondary" onClick={() => void saveVariant()}>
+                <Save className="h-3.5 w-3.5" />
+                Zapisz wersję
+              </Button>
+            </div>
+            <textarea
+              value={editingTemplate}
+              onChange={(e) => setEditingTemplate(e.target.value)}
+              rows={12}
+              className="w-full rounded-xl border border-arena-border bg-arena-bg p-4 font-mono text-xs leading-relaxed text-arena-text outline-none focus:border-arena-accent"
+            />
+          </div>
+        </Card>
+      )}
     </div>
   )
 }

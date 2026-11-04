@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import {
   Bar,
   BarChart,
@@ -15,15 +16,10 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { Download, LayoutDashboard, Medal } from 'lucide-react'
-import {
-  categoryLabels,
-  categoryStats,
-  costOverTime,
-  leaderboard,
-  models,
-  promptVariantPerformance,
-} from '../data/mockData'
+import { Download, LayoutDashboard, Loader2, Medal } from 'lucide-react'
+import { api } from '../api/client'
+import { categoryLabels } from '../data/labels'
+import type { CategoryStat, LeaderboardEntry, ModelInfo } from '../types'
 import { Badge, Button, Card, CardHeader, Stat } from '../components/ui'
 import { exportCSV, exportJSON } from '../utils/export'
 import { formatMs, formatUsd, winRate } from '../utils/scoring'
@@ -35,70 +31,97 @@ const tooltipStyle = {
   fontSize: 12,
 }
 
-function modelName(id: string) {
-  return models.find((m) => m.id === id)?.name ?? id
-}
-
-function modelColor(id: string) {
-  return models.find((m) => m.id === id)?.color ?? '#3b82f6'
-}
-
-function shortName(id: string) {
-  return modelName(id)
-    .replace(' 3.5 Sonnet', '')
-    .replace(' 1.5 Pro', '')
-    .replace(' 70B', '')
-    .replace(' 72B', '')
-}
-
 export function Dashboard() {
+  const [models, setModels] = useState<ModelInfo[]>([])
+  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([])
+  const [categoryStats, setCategoryStats] = useState<CategoryStat[]>([])
+  const [promptVariantPerformance, setPromptVariantPerformance] = useState<
+    Array<{ variant: string; avgScore: number; winRate: number; hallucinations: number; avgLatency: number }>
+  >([])
+  const [costOverTime, setCostOverTime] = useState<
+    Array<{ day: string; cost: number; comparisons: number }>
+  >([])
+  const [overview, setOverview] = useState<{
+    totalComparisons: number
+    totalCostUsd: number
+    avgHallucinationRate: number
+    topModelId: string | null
+    topElo: number | null
+  } | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const [mods, lb, cats, pvs, cost, ov] = await Promise.all([
+          api.models(),
+          api.analytics.leaderboard(),
+          api.analytics.categories(),
+          api.analytics.promptVariants(),
+          api.analytics.costOverTime(),
+          api.analytics.overview(),
+        ])
+        if (cancelled) return
+        setModels(mods)
+        setLeaderboard(lb)
+        setCategoryStats(cats)
+        setPromptVariantPerformance(pvs)
+        setCostOverTime(cost)
+        setOverview(ov)
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : 'Błąd API')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const modelName = (id: string) => models.find((m) => m.id === id)?.name ?? id
+  const modelColor = (id: string) => models.find((m) => m.id === id)?.color ?? '#3b82f6'
+  const shortName = (id: string) =>
+    modelName(id)
+      .replace(' 3.5 Sonnet', '')
+      .replace(' 1.5 Pro', '')
+      .replace(' 70B', '')
+      .replace(' 72B', '')
+
+  if (loading) {
+    return (
+      <div className="flex h-64 items-center justify-center gap-2 text-arena-muted">
+        <Loader2 className="h-5 w-5 animate-spin" /> Ładowanie analytics…
+      </div>
+    )
+  }
+
+  if (error || !overview || !leaderboard.length) {
+    return <div className="p-6 text-arena-danger">{error ?? 'Brak danych'}</div>
+  }
+
   const top = leaderboard[0]
-  const totalComparisons = leaderboard.reduce(
-    (s, e) => s + e.wins + e.losses + e.ties + e.bothBad,
-    0,
-  )
-  const avgHalluc =
-    leaderboard.reduce((s, e) => s + e.hallucinationRate, 0) / leaderboard.length
-  const totalCost = leaderboard.reduce((s, e) => s + e.totalCostUsd, 0)
-
-  const eloBars = leaderboard.map((e) => ({
-    name: shortName(e.modelId),
-    elo: e.elo,
-  }))
-
+  const eloBars = leaderboard.map((e) => ({ name: shortName(e.modelId), elo: e.elo }))
   const categoryBars = categoryStats.map((c) => ({
     category: categoryLabels[c.category],
     score: Number(c.avgScore.toFixed(2)),
-    comparisons: c.comparisons,
     hallucinations: c.hallucinations,
   }))
-
+  const top3 = leaderboard.slice(0, 3)
   const radarData = (
     ['programowanie', 'logika', 'streszczanie', 'instrukcje', 'wiedza'] as const
   ).map((cat) => {
-    const row: Record<string, string | number> = {
-      category: categoryLabels[cat],
-    }
-    for (const entry of leaderboard.slice(0, 3)) {
-      row[shortName(entry.modelId)] = entry.categoryScores[cat]
-    }
+    const row: Record<string, string | number> = { category: categoryLabels[cat] }
+    for (const entry of top3) row[shortName(entry.modelId)] = entry.categoryScores[cat]
     return row
   })
-
-  const top3 = leaderboard.slice(0, 3)
   const qualityBars = leaderboard.map((e) => ({
     name: shortName(e.modelId).split(' ')[0],
     hallucinations: Number((e.hallucinationRate * 100).toFixed(1)),
     errors: Number((e.errorRate * 100).toFixed(1)),
   }))
-
-  const exportPayload = {
-    exportedAt: new Date().toISOString(),
-    leaderboard,
-    categoryStats,
-    promptVariantPerformance,
-    costOverTime,
-  }
 
   return (
     <div className="animate-fade-in space-y-6 p-6">
@@ -109,16 +132,16 @@ export function Dashboard() {
           </div>
           <div>
             <h1 className="text-xl font-semibold text-arena-text">Dashboard i ranking</h1>
-            <p className="text-sm text-arena-muted">
-              Wyniki zbiorcze, Elo, kategorie, koszty i jakość odpowiedzi
-            </p>
+            <p className="text-sm text-arena-muted">Dane z API / SQLite · Elo aktualizowane przy głosach</p>
           </div>
         </div>
         <div className="flex gap-2">
           <Button
             variant="outline"
             size="sm"
-            onClick={() => exportJSON('modeleval-export.json', exportPayload)}
+            onClick={() =>
+              void api.analytics.export().then((data) => exportJSON('modeleval-export.json', data))
+            }
           >
             <Download className="h-3.5 w-3.5" />
             Eksportuj JSON
@@ -151,16 +174,12 @@ export function Dashboard() {
       </header>
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Stat label="Porównania" value={totalComparisons} hint="suma głosów pairwise" />
-        <Stat
-          label="Lider Elo"
-          value={shortName(top.modelId)}
-          hint={`Elo ${top.elo}`}
-        />
-        <Stat label="Koszt łącznie" value={formatUsd(totalCost)} hint="wszystkie modele" />
+        <Stat label="Porównania" value={overview.totalComparisons} hint="głosy w bazie" />
+        <Stat label="Lider Elo" value={shortName(top.modelId)} hint={`Elo ${top.elo}`} />
+        <Stat label="Koszt łącznie" value={formatUsd(overview.totalCostUsd)} hint="wszystkie modele" />
         <Stat
           label="Śr. halucynacje"
-          value={`${(avgHalluc * 100).toFixed(1)}%`}
+          value={`${(overview.avgHallucinationRate * 100).toFixed(1)}%`}
           hint="średnia między modelami"
         />
       </div>
@@ -236,7 +255,7 @@ export function Dashboard() {
           <CardHeader title="Elo ranking" subtitle="Bar chart — siła modeli" />
           <div className="h-72 p-4">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={eloBars} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+              <BarChart data={eloBars}>
                 <CartesianGrid stroke="#2a3548" strokeDasharray="3 3" vertical={false} />
                 <XAxis dataKey="name" stroke="#5c6b82" fontSize={11} tickLine={false} />
                 <YAxis stroke="#5c6b82" fontSize={11} domain={[1000, 1350]} />
@@ -248,20 +267,13 @@ export function Dashboard() {
         </Card>
 
         <Card>
-          <CardHeader
-            title="Radar — top 3 × kategorie"
-            subtitle="Średni wynik rubryki 1–5"
-          />
+          <CardHeader title="Radar — top 3 × kategorie" subtitle="Średni wynik rubryki 1–5" />
           <div className="h-72 p-4">
             <ResponsiveContainer width="100%" height="100%">
               <RadarChart data={radarData}>
                 <PolarGrid stroke="#2a3548" />
                 <PolarAngleAxis dataKey="category" tick={{ fill: '#8b9bb4', fontSize: 11 }} />
-                <PolarRadiusAxis
-                  angle={30}
-                  domain={[0, 5]}
-                  tick={{ fill: '#5c6b82', fontSize: 10 }}
-                />
+                <PolarRadiusAxis angle={30} domain={[0, 5]} tick={{ fill: '#5c6b82', fontSize: 10 }} />
                 {top3.map((entry, i) => (
                   <Radar
                     key={entry.modelId}
@@ -290,12 +302,7 @@ export function Dashboard() {
                 <Tooltip contentStyle={tooltipStyle} />
                 <Legend wrapperStyle={{ fontSize: 12 }} />
                 <Bar dataKey="score" name="Avg score" fill="#38bdf8" radius={[4, 4, 0, 0]} />
-                <Bar
-                  dataKey="hallucinations"
-                  name="Halucynacje"
-                  fill="#ef4444"
-                  radius={[4, 4, 0, 0]}
-                />
+                <Bar dataKey="hallucinations" name="Halucynacje" fill="#ef4444" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -333,32 +340,15 @@ export function Dashboard() {
                 <YAxis stroke="#5c6b82" fontSize={11} />
                 <Tooltip contentStyle={tooltipStyle} />
                 <Legend wrapperStyle={{ fontSize: 12 }} />
-                <Line
-                  type="monotone"
-                  dataKey="cost"
-                  name="Koszt USD"
-                  stroke="#f59e0b"
-                  strokeWidth={2}
-                  dot={{ r: 3 }}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="comparisons"
-                  name="Porównania"
-                  stroke="#3b82f6"
-                  strokeWidth={2}
-                  dot={{ r: 3 }}
-                />
+                <Line type="monotone" dataKey="cost" name="Koszt USD" stroke="#f59e0b" strokeWidth={2} />
+                <Line type="monotone" dataKey="comparisons" name="Porównania" stroke="#3b82f6" strokeWidth={2} />
               </LineChart>
             </ResponsiveContainer>
           </div>
         </Card>
 
         <Card>
-          <CardHeader
-            title="Błędy i halucynacje"
-            subtitle="Metryki jakości operacyjnej (%)"
-          />
+          <CardHeader title="Błędy i halucynacje" subtitle="Metryki jakości (%)" />
           <div className="h-72 p-4">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={qualityBars}>
@@ -367,12 +357,7 @@ export function Dashboard() {
                 <YAxis stroke="#5c6b82" fontSize={11} />
                 <Tooltip contentStyle={tooltipStyle} />
                 <Legend wrapperStyle={{ fontSize: 12 }} />
-                <Bar
-                  dataKey="hallucinations"
-                  name="Halluc. %"
-                  fill="#ef4444"
-                  radius={[4, 4, 0, 0]}
-                />
+                <Bar dataKey="hallucinations" name="Halluc. %" fill="#ef4444" radius={[4, 4, 0, 0]} />
                 <Bar dataKey="errors" name="Error %" fill="#f59e0b" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
