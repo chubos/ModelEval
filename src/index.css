@@ -1,0 +1,75 @@
+@import "tailwindcss";
+
+@theme {
+  --color-arena-bg: #0b0f19;
+  --color-arena-surface: #121826;
+  --color-arena-card: #161e2e;
+  --color-arena-elevated: #1c2638;
+  --color-arena-border: #2a3548;
+  --color-arena-border-hover: #3d4f6a;
+  --color-arena-text: #e8edf5;
+  --color-arena-muted: #8b9bb4;
+  --color-arena-dim: #5c6b82;
+  --color-arena-accent: #3b82f6;
+  --color-arena-accent-soft: #1e3a5f;
+  --color-arena-success: #22c55e;
+  --color-arena-success-soft: #14532d;
+  --color-arena-warning: #f59e0b;
+  --color-arena-danger: #ef4444;
+  --color-arena-danger-soft: #7f1d1d;
+  --color-arena-tie: #a78bfa;
+  --color-arena-model-a: #38bdf8;
+  --color-arena-model-b: #fb923c;
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-arena-bg);
+  color: var(--color-arena-text);
+  font-family: var(--font-sans);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #2a3548;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #3d4f6a;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.35s ease-out both;
+}
