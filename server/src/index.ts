@@ -1,12 +1,24 @@
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import cors from 'cors'
 import express from 'express'
 import {
   applyVoteToLeaderboard,
   db,
+  ensureExperimentExists,
+  ensureModelExists,
+  ensureTaskExists,
   mapPair,
   type ArenaPairRow,
   weightedRubric,
 } from './db.ts'
+import {
+  callLlmChat,
+  normalizeBaseUrl,
+  resolveApiKey,
+  resolveModelName,
+} from './services/llm.ts'
 import type {
   BenchmarkTask,
   ExperimentConfig,
@@ -16,6 +28,26 @@ import type {
   VoteResult,
 } from './types/index.ts'
 
+// Automatyczne ładowanie zmiennych środowiskowych z .env
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const envLocations = [
+  path.resolve(__dirname, '../../.env'),
+  path.resolve(__dirname, '../.env'),
+  path.resolve(process.cwd(), '.env'),
+]
+
+for (const envPath of envLocations) {
+  if (fs.existsSync(envPath)) {
+    try {
+      if (typeof process.loadEnvFile === 'function') {
+        process.loadEnvFile(envPath)
+      }
+    } catch {
+      // Ignoruj błędy parsowania
+    }
+  }
+}
+
 const app = express()
 const PORT = Number(process.env.PORT ?? 3001)
 
@@ -24,6 +56,52 @@ app.use(express.json({ limit: '2mb' }))
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true, service: 'modeleval-api', db: 'sqlite' })
+})
+
+/* ─── Config / Environment Info ─── */
+app.get('/api/config', (_req, res) => {
+  const apiKey = resolveApiKey()
+  res.json({
+    hasApiKey: Boolean(apiKey),
+    maskedKey: apiKey ? `${apiKey.slice(0, 4)}...${apiKey.slice(-4)}` : null,
+    baseUrl: normalizeBaseUrl(),
+    defaultModelA: process.env.DEFAULT_MODEL_A || 'google/gemini-2.5-flash',
+    defaultModelB: process.env.DEFAULT_MODEL_B || 'openai/gpt-4o-mini',
+  })
+})
+
+/* ─── LLM Verification Probe ─── */
+app.post('/api/llm/verify', async (req, res) => {
+  const { apiKey, baseUrl, model } = req.body as {
+    apiKey?: string
+    baseUrl?: string
+    model?: string
+  }
+  const testModel = model || 'google/gemini-2.5-flash'
+  try {
+    const result = await callLlmChat(
+      [
+        { role: 'system', content: 'You are a connection test probe. Reply with the single word PONG.' },
+        { role: 'user', content: 'Ping' },
+      ],
+      {
+        apiKey,
+        baseUrl,
+        model: testModel,
+        maxTokens: 10,
+        temperature: 0,
+      },
+    )
+    res.json({
+      ok: true,
+      model: result.modelId,
+      latencyMs: result.latencyMs,
+      response: result.content,
+    })
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err)
+    res.status(400).json({ ok: false, error: message })
+  }
 })
 
 /* ─── Models ─── */
@@ -366,6 +444,336 @@ app.post('/api/arena/:id/vote', (req, res) => {
 
   const updated = db.prepare(`SELECT * FROM arena_pairs WHERE id = ?`).get(req.params.id) as ArenaPairRow
   res.json(mapPair(updated))
+})
+
+app.delete('/api/arena/:id', (req, res) => {
+  const info = db.prepare(`DELETE FROM arena_pairs WHERE id = ?`).run(req.params.id)
+  if (info.changes === 0) {
+    res.status(404).json({ error: 'Pair not found' })
+    return
+  }
+  res.status(204).end()
+})
+
+app.post('/api/arena/generate', async (req, res) => {
+  const body = req.body as {
+    promptText: string
+    promptVariant?: PromptVariantId
+    modelAId?: string
+    modelBId?: string
+    taskId?: string
+    experimentId?: string
+    config?: {
+      apiKey?: string
+      baseUrl?: string
+      temperature?: number
+      maxTokens?: number
+    }
+  }
+
+  const promptText = (body.promptText ?? '').trim()
+  if (!promptText) {
+    res.status(400).json({ error: 'Treść promptu (promptText) jest wymagana.' })
+    return
+  }
+
+  const promptVariantId = body.promptVariant ?? 'A'
+  const modelAId = resolveModelName(body.modelAId || process.env.DEFAULT_MODEL_A || 'google/gemini-2.5-flash')
+  const modelBId = resolveModelName(body.modelBId || process.env.DEFAULT_MODEL_B || 'openai/gpt-4o-mini')
+  const taskId = body.taskId || `task-live-${Date.now().toString(36)}`
+  const experimentId = body.experimentId || 'exp-live'
+
+  ensureModelExists(modelAId)
+  ensureModelExists(modelBId)
+  ensureExperimentExists(experimentId, 'Pojedynki Areny na żywo')
+  ensureTaskExists(taskId, promptText.slice(0, 60), promptText)
+
+  // Pobierz szablon promptu
+  const variantRow = db
+    .prepare(`SELECT template FROM prompt_variants WHERE id = ?`)
+    .get(promptVariantId) as { template: string } | undefined
+  const template = variantRow?.template ?? '{{task}}'
+
+  // Przygotuj właściwy prompt
+  let renderedPrompt = template.replace('{{task}}', promptText)
+  if (renderedPrompt.includes('{{criteria}}')) {
+    const taskRow = db.prepare(`SELECT criteria FROM tasks WHERE id = ?`).get(taskId) as
+      | { criteria: string }
+      | undefined
+    renderedPrompt = renderedPrompt.replace('{{criteria}}', taskRow?.criteria ?? 'Ogólna poprawność i precyzja')
+  }
+
+  const messages: Array<{ role: 'user'; content: string }> = [
+    { role: 'user', content: renderedPrompt },
+  ]
+
+  const llmConfig = body.config ?? {}
+
+  // Równoległe odpytywanie modeli
+  const [resA, resB] = await Promise.allSettled([
+    callLlmChat(messages, {
+      model: modelAId,
+      apiKey: llmConfig.apiKey,
+      baseUrl: llmConfig.baseUrl,
+      temperature: llmConfig.temperature,
+      maxTokens: llmConfig.maxTokens,
+    }),
+    callLlmChat(messages, {
+      model: modelBId,
+      apiKey: llmConfig.apiKey,
+      baseUrl: llmConfig.baseUrl,
+      temperature: llmConfig.temperature,
+      maxTokens: llmConfig.maxTokens,
+    }),
+  ])
+
+  const outcomeA =
+    resA.status === 'fulfilled'
+      ? resA.value
+      : {
+          content: `[BŁĄD MODELU A]: ${resA.reason instanceof Error ? resA.reason.message : String(resA.reason)}`,
+          latencyMs: 0,
+          tokensIn: 0,
+          tokensOut: 0,
+          costUsd: 0,
+          modelId: modelAId,
+          error: resA.reason instanceof Error ? resA.reason.message : String(resA.reason),
+        }
+
+  const outcomeB =
+    resB.status === 'fulfilled'
+      ? resB.value
+      : {
+          content: `[BŁĄD MODELU B]: ${resB.reason instanceof Error ? resB.reason.message : String(resB.reason)}`,
+          latencyMs: 0,
+          tokensIn: 0,
+          tokensOut: 0,
+          costUsd: 0,
+          modelId: modelBId,
+          error: resB.reason instanceof Error ? resB.reason.message : String(resB.reason),
+        }
+
+  // Zwróć natychmiast błąd, jeśli wystąpił brak klucza API
+  if (outcomeA.error && outcomeB.error) {
+    if (
+      outcomeA.error.includes('Brak klucza API') ||
+      outcomeA.error.includes('401')
+    ) {
+      res.status(400).json({ error: outcomeA.error })
+      return
+    }
+  }
+
+  const pairId = `pair-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+  const leftIsA = Math.random() < 0.5 ? 1 : 0
+
+  const newPairRow: ArenaPairRow = {
+    id: pairId,
+    task_id: taskId,
+    experiment_id: experimentId,
+    prompt_variant: promptVariantId,
+    prompt_text: renderedPrompt,
+    model_a_id: modelAId,
+    model_a_content: outcomeA.content,
+    model_a_latency_ms: outcomeA.latencyMs,
+    model_a_tokens_in: outcomeA.tokensIn,
+    model_a_tokens_out: outcomeA.tokensOut,
+    model_a_cost_usd: outcomeA.costUsd,
+    model_a_hallucinated: 0,
+    model_a_error: outcomeA.error ?? null,
+    model_b_id: modelBId,
+    model_b_content: outcomeB.content,
+    model_b_latency_ms: outcomeB.latencyMs,
+    model_b_tokens_in: outcomeB.tokensIn,
+    model_b_tokens_out: outcomeB.tokensOut,
+    model_b_cost_usd: outcomeB.costUsd,
+    model_b_hallucinated: 0,
+    model_b_error: outcomeB.error ?? null,
+    left_is_a: leftIsA,
+    vote: null,
+    rubric_a: null,
+    rubric_b: null,
+    judged_at: null,
+  }
+
+  db.prepare(`
+    INSERT INTO arena_pairs (
+      id, task_id, experiment_id, prompt_variant, prompt_text,
+      model_a_id, model_a_content, model_a_latency_ms, model_a_tokens_in, model_a_tokens_out,
+      model_a_cost_usd, model_a_hallucinated, model_a_error,
+      model_b_id, model_b_content, model_b_latency_ms, model_b_tokens_in, model_b_tokens_out,
+      model_b_cost_usd, model_b_hallucinated, model_b_error,
+      left_is_a, vote, rubric_a, rubric_b, judged_at
+    ) VALUES (
+      @id, @task_id, @experiment_id, @prompt_variant, @prompt_text,
+      @model_a_id, @model_a_content, @model_a_latency_ms, @model_a_tokens_in, @model_a_tokens_out,
+      @model_a_cost_usd, @model_a_hallucinated, @model_a_error,
+      @model_b_id, @model_b_content, @model_b_latency_ms, @model_b_tokens_in, @model_b_tokens_out,
+      @model_b_cost_usd, @model_b_hallucinated, @model_b_error,
+      @left_is_a, @vote, @rubric_a, @rubric_b, @judged_at
+    )
+  `).run(newPairRow)
+
+  res.status(201).json(mapPair(newPairRow))
+})
+
+app.post('/api/experiments/:id/run', async (req, res) => {
+  const row = db.prepare(`SELECT * FROM experiments WHERE id = ?`).get(req.params.id) as
+    | Parameters<typeof mapExperiment>[0]
+    | undefined
+  if (!row) {
+    res.status(404).json({ error: 'Experiment not found' })
+    return
+  }
+
+  const exp = mapExperiment(row)
+  if (exp.modelIds.length < 2) {
+    res.status(400).json({ error: 'Eksperyment wymaga co najmniej 2 modeli.' })
+    return
+  }
+
+  const modelAId = resolveModelName(exp.modelIds[0])
+  const modelBId = resolveModelName(exp.modelIds[1])
+  ensureModelExists(modelAId)
+  ensureModelExists(modelBId)
+
+  // Oznacz jako running
+  db.prepare(`UPDATE experiments SET status = 'running' WHERE id = ?`).run(exp.id)
+
+  const taskIds = exp.taskIds.length > 0 ? exp.taskIds : ['task-001']
+  const generatedPairs: ArenaPairRow[] = []
+
+  const variantRow = db
+    .prepare(`SELECT template FROM prompt_variants WHERE id = ?`)
+    .get(exp.promptVariant) as { template: string } | undefined
+  const template = variantRow?.template ?? '{{task}}'
+
+  const bodyConfig = req.body as { config?: { apiKey?: string; baseUrl?: string } }
+  const llmConfig = bodyConfig?.config ?? {}
+
+  for (const taskId of taskIds) {
+    const taskRow = db.prepare(`SELECT * FROM tasks WHERE id = ?`).get(taskId) as
+      | Parameters<typeof mapTask>[0]
+      | undefined
+    if (!taskRow) continue
+
+    const task = mapTask(taskRow)
+    let renderedPrompt = template.replace('{{task}}', task.content)
+    if (renderedPrompt.includes('{{criteria}}')) {
+      renderedPrompt = renderedPrompt.replace('{{criteria}}', task.criteria)
+    }
+
+    const messages: Array<{ role: 'user'; content: string }> = [
+      { role: 'user', content: renderedPrompt },
+    ]
+
+    const [resA, resB] = await Promise.allSettled([
+      callLlmChat(messages, {
+        model: modelAId,
+        apiKey: llmConfig.apiKey,
+        baseUrl: llmConfig.baseUrl,
+        temperature: exp.temperature,
+        maxTokens: exp.maxTokens,
+      }),
+      callLlmChat(messages, {
+        model: modelBId,
+        apiKey: llmConfig.apiKey,
+        baseUrl: llmConfig.baseUrl,
+        temperature: exp.temperature,
+        maxTokens: exp.maxTokens,
+      }),
+    ])
+
+    const outcomeA =
+      resA.status === 'fulfilled'
+        ? resA.value
+        : {
+            content: `[BŁĄD MODELU A]: ${resA.reason instanceof Error ? resA.reason.message : String(resA.reason)}`,
+            latencyMs: 0,
+            tokensIn: 0,
+            tokensOut: 0,
+            costUsd: 0,
+            modelId: modelAId,
+            error: resA.reason instanceof Error ? resA.reason.message : String(resA.reason),
+          }
+
+    const outcomeB =
+      resB.status === 'fulfilled'
+        ? resB.value
+        : {
+            content: `[BŁĄD MODELU B]: ${resB.reason instanceof Error ? resB.reason.message : String(resB.reason)}`,
+            latencyMs: 0,
+            tokensIn: 0,
+            tokensOut: 0,
+            costUsd: 0,
+            modelId: modelBId,
+            error: resB.reason instanceof Error ? resB.reason.message : String(resB.reason),
+          }
+
+    const pairId = `pair-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+    const leftIsA = Math.random() < 0.5 ? 1 : 0
+
+    const pairRow: ArenaPairRow = {
+      id: pairId,
+      task_id: task.id,
+      experiment_id: exp.id,
+      prompt_variant: exp.promptVariant,
+      prompt_text: renderedPrompt,
+      model_a_id: modelAId,
+      model_a_content: outcomeA.content,
+      model_a_latency_ms: outcomeA.latencyMs,
+      model_a_tokens_in: outcomeA.tokensIn,
+      model_a_tokens_out: outcomeA.tokensOut,
+      model_a_cost_usd: outcomeA.costUsd,
+      model_a_hallucinated: 0,
+      model_a_error: outcomeA.error ?? null,
+      model_b_id: modelBId,
+      model_b_content: outcomeB.content,
+      model_b_latency_ms: outcomeB.latencyMs,
+      model_b_tokens_in: outcomeB.tokensIn,
+      model_b_tokens_out: outcomeB.tokensOut,
+      model_b_cost_usd: outcomeB.costUsd,
+      model_b_hallucinated: 0,
+      model_b_error: outcomeB.error ?? null,
+      left_is_a: leftIsA,
+      vote: null,
+      rubric_a: null,
+      rubric_b: null,
+      judged_at: null,
+    }
+
+    db.prepare(`
+      INSERT INTO arena_pairs (
+        id, task_id, experiment_id, prompt_variant, prompt_text,
+        model_a_id, model_a_content, model_a_latency_ms, model_a_tokens_in, model_a_tokens_out,
+        model_a_cost_usd, model_a_hallucinated, model_a_error,
+        model_b_id, model_b_content, model_b_latency_ms, model_b_tokens_in, model_b_tokens_out,
+        model_b_cost_usd, model_b_hallucinated, model_b_error,
+        left_is_a, vote, rubric_a, rubric_b, judged_at
+      ) VALUES (
+        @id, @task_id, @experiment_id, @prompt_variant, @prompt_text,
+        @model_a_id, @model_a_content, @model_a_latency_ms, @model_a_tokens_in, @model_a_tokens_out,
+        @model_a_cost_usd, @model_a_hallucinated, @model_a_error,
+        @model_b_id, @model_b_content, @model_b_latency_ms, @model_b_tokens_in, @model_b_tokens_out,
+        @model_b_cost_usd, @model_b_hallucinated, @model_b_error,
+        @left_is_a, @vote, @rubric_a, @rubric_b, @judged_at
+      )
+    `).run(pairRow)
+
+    generatedPairs.push(pairRow)
+  }
+
+  db.prepare(`UPDATE experiments SET status = 'completed' WHERE id = ?`).run(exp.id)
+  const updatedExp = mapExperiment(
+    db.prepare(`SELECT * FROM experiments WHERE id = ?`).get(exp.id) as Parameters<
+      typeof mapExperiment
+    >[0],
+  )
+
+  res.json({
+    experiment: updatedExp,
+    pairsCreated: generatedPairs.map(mapPair),
+  })
 })
 
 /* ─── Analytics ─── */

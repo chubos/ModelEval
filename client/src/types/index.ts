@@ -121,3 +121,43 @@ export interface CategoryStat {
   comparisons: number
   hallucinations: number
 }
+
+/* ─── Ustawienia i konfiguracja LLM ─── */
+export interface LlmSettings {
+  apiKey: string
+  baseUrl: string
+  modelA: string
+  modelB: string
+}
+
+export interface ServerConfig {
+  hasApiKey: boolean
+  maskedKey: string | null
+  baseUrl: string
+  defaultModelA: string
+  defaultModelB: string
+}
+
+export interface GeneratePairPayload {
+  promptText: string
+  promptVariant?: PromptVariantId
+  modelAId?: string
+  modelBId?: string
+  taskId?: string
+  experimentId?: string
+  config?: {
+    apiKey?: string
+    baseUrl?: string
+    temperature?: number
+    maxTokens?: number
+  }
+}
+
+export interface ExampleTask {
+  id: string
+  title: string
+  category: string
+  badge: string
+  prompt: string
+  iconName: 'FileText' | 'Code' | 'Lightbulb' | 'Languages' | 'FileSpreadsheet'
+}

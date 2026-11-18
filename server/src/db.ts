@@ -392,6 +392,61 @@ function expectedScore(ra: number, rb: number) {
   return 1 / (1 + 10 ** ((rb - ra) / 400))
 }
 
+export function ensureModelExists(modelId: string, modelName?: string, provider?: string) {
+  const existing = db.prepare(`SELECT id FROM models WHERE id = ?`).get(modelId)
+  if (!existing) {
+    const parts = modelId.split('/')
+    const derivedProvider = provider || (parts.length > 1 ? parts[0] : 'AI')
+    const derivedName = modelName || (parts.length > 1 ? parts[1] : modelId)
+    const colors = ['#10a37f', '#d97706', '#4285f4', '#0668E1', '#f5471a', '#615ced', '#059669', '#8b5cf6']
+    const color = colors[Math.abs(modelId.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0)) % colors.length]
+
+    db.prepare(`INSERT OR IGNORE INTO models (id, name, provider, color) VALUES (?, ?, ?, ?)`).run(
+      modelId,
+      derivedName,
+      derivedProvider,
+      color,
+    )
+  }
+
+  const existingLb = db.prepare(`SELECT model_id FROM leaderboard WHERE model_id = ?`).get(modelId)
+  if (!existingLb) {
+    db.prepare(`
+      INSERT OR IGNORE INTO leaderboard (
+        model_id, wins, losses, ties, both_bad, elo, avg_score, avg_latency_ms,
+        total_cost_usd, hallucination_rate, error_rate, category_scores
+      ) VALUES (
+        ?, 0, 0, 0, 0, 1200, 0, 0, 0, 0, 0, ?
+      )
+    `).run(
+      modelId,
+      JSON.stringify({ programowanie: 0, logika: 0, streszczanie: 0, instrukcje: 0, wiedza: 0 }),
+    )
+  }
+}
+
+export function ensureExperimentExists(experimentId: string, name?: string) {
+  const existing = db.prepare(`SELECT id FROM experiments WHERE id = ?`).get(experimentId)
+  if (!existing) {
+    db.prepare(`
+      INSERT OR IGNORE INTO experiments (
+        id, name, model_ids, prompt_variant, temperature, max_tokens, trials, task_ids, status, created_at
+      ) VALUES (?, ?, '[]', 'A', 0.2, 1024, 1, '[]', 'completed', ?)
+    `).run(experimentId, name || 'Pojedynki na żywo', new Date().toISOString())
+  }
+}
+
+export function ensureTaskExists(taskId: string, title?: string, content?: string) {
+  const existing = db.prepare(`SELECT id FROM tasks WHERE id = ?`).get(taskId)
+  if (!existing) {
+    db.prepare(`
+      INSERT OR IGNORE INTO tasks (
+        id, title, content, category, criteria, expected_elements, difficulty
+      ) VALUES (?, ?, ?, 'inne', 'Ogólna jakość i poprawność', '[]', 2)
+    `).run(taskId, title || 'Zadanie Areny', content || title || '')
+  }
+}
+
 export function applyVoteToLeaderboard(
   modelAId: string,
   modelBId: string,
@@ -400,6 +455,9 @@ export function applyVoteToLeaderboard(
 ) {
   // For simplicity, only apply delta when going from null -> vote (first judgment)
   if (previousVote) return
+
+  ensureModelExists(modelAId)
+  ensureModelExists(modelBId)
 
   const get = db.prepare(`SELECT model_id, wins, losses, ties, both_bad, elo FROM leaderboard WHERE model_id = ?`)
   const a = get.get(modelAId) as

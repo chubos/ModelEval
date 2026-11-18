@@ -83,12 +83,10 @@ export function Dashboard() {
 
   const modelName = (id: string) => models.find((m) => m.id === id)?.name ?? id
   const modelColor = (id: string) => models.find((m) => m.id === id)?.color ?? '#3b82f6'
-  const shortName = (id: string) =>
-    modelName(id)
-      .replace(' 3.5 Sonnet', '')
-      .replace(' 1.5 Pro', '')
-      .replace(' 70B', '')
-      .replace(' 72B', '')
+  const shortName = (id: string) => {
+    const raw = modelName(id)
+    return raw.replace(' (alias)', '').trim()
+  }
 
   if (loading) {
     return (

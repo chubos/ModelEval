@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
+  AlertCircle,
   CheckCircle2,
   CircleDashed,
   Clock3,
@@ -9,11 +10,14 @@ import {
   Play,
   Plus,
   Save,
+  Swords,
 } from 'lucide-react'
 import { api } from '../api/client'
 import type { ExperimentConfig, ModelInfo, PromptVariant, PromptVariantId, BenchmarkTask } from '../types'
 import { Badge, Button, Card, CardHeader } from '../components/ui'
 import { cn } from '../utils/cn'
+import { getStoredSettings } from '../utils/settings'
+import { useNavigate } from 'react-router-dom'
 
 const statusMeta = {
   draft: { label: 'Szkic', tone: 'neutral' as const, icon: CircleDashed },
@@ -32,13 +36,17 @@ export function Experiments() {
   const [editingTemplate, setEditingTemplate] = useState('')
   const [form, setForm] = useState({
     name: '',
-    modelIds: ['gpt-4o', 'claude-3.5'] as string[],
+    modelIds: ['google/gemini-2.5-flash', 'openai/gpt-4o-mini'] as string[],
     promptVariant: 'B' as PromptVariantId,
     temperature: 0.2,
     maxTokens: 1024,
     trials: 3,
     taskIds: ['task-001', 'task-007'] as string[],
   })
+  const [runningExpId, setRunningExpId] = useState<string | null>(null)
+  const [runError, setRunError] = useState<string | null>(null)
+  const [runSuccess, setRunSuccess] = useState<string | null>(null)
+  const navigate = useNavigate()
 
   useEffect(() => {
     let cancelled = false
@@ -117,6 +125,27 @@ export function Experiments() {
     setForm((f) => ({ ...f, name: '' }))
   }
 
+  const handleRunExperiment = async (expId: string) => {
+    const stored = getStoredSettings()
+    setRunningExpId(expId)
+    setRunError(null)
+    setRunSuccess(null)
+    try {
+      const res = await api.experiments.run(expId, {
+        config: {
+          apiKey: stored.apiKey || undefined,
+          baseUrl: stored.baseUrl || undefined,
+        },
+      })
+      setExperiments((prev) => prev.map((e) => (e.id === res.experiment.id ? res.experiment : e)))
+      setRunSuccess(`Ukończono eksperyment! Wygenerowano ${res.pairsCreated.length} par w Arenie.`)
+    } catch (err: unknown) {
+      setRunError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setRunningExpId(null)
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex h-64 items-center justify-center gap-2 text-arena-muted">
@@ -139,11 +168,31 @@ export function Experiments() {
           <div>
             <h1 className="text-xl font-semibold text-arena-text">Eksperymenty i prompty</h1>
             <p className="text-sm text-arena-muted">
-              Konfiguracja przebiegów — dane w SQLite
+              Prawdziwe generowanie przebiegów na modelach AI
             </p>
           </div>
         </div>
       </header>
+
+      {runSuccess && (
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-500/40 bg-emerald-950/30 p-3.5 text-xs text-emerald-300">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+            <span>{runSuccess}</span>
+          </div>
+          <Button size="sm" variant="outline" onClick={() => navigate('/')}>
+            <Swords className="h-3.5 w-3.5" />
+            Przejdź do Areny
+          </Button>
+        </div>
+      )}
+
+      {runError && (
+        <div className="flex items-start gap-2.5 rounded-xl border border-red-500/40 bg-red-950/30 p-3.5 text-xs text-red-300">
+          <AlertCircle className="h-4 w-4 text-red-400 shrink-0" />
+          <span>{runError}</span>
+        </div>
+      )}
 
       <div className="grid gap-6 xl:grid-cols-5">
         <Card className="xl:col-span-2">
@@ -315,16 +364,15 @@ export function Experiments() {
                     <Button
                       size="sm"
                       variant="secondary"
-                      onClick={() =>
-                        void api.experiments.patch(exp.id, { status: 'running' }).then((updated) => {
-                          setExperiments((prev) =>
-                            prev.map((e) => (e.id === updated.id ? updated : e)),
-                          )
-                        })
-                      }
+                      disabled={runningExpId === exp.id}
+                      onClick={() => void handleRunExperiment(exp.id)}
                     >
-                      <Play className="h-3.5 w-3.5" />
-                      Start
+                      {runningExpId === exp.id ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Play className="h-3.5 w-3.5" />
+                      )}
+                      {runningExpId === exp.id ? 'Generowanie…' : 'Start'}
                     </Button>
                   )}
                 </div>

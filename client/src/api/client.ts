@@ -3,10 +3,12 @@ import type {
   BenchmarkTask,
   CategoryStat,
   ExperimentConfig,
+  GeneratePairPayload,
   LeaderboardEntry,
   ModelInfo,
   PromptVariant,
   RubricScores,
+  ServerConfig,
   VoteResult,
 } from '../types'
 
@@ -25,6 +27,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   health: () => request<{ ok: boolean }>('/api/health'),
+  config: () => request<ServerConfig>('/api/config'),
   models: () => request<ModelInfo[]>('/api/models'),
   tasks: {
     list: () => request<BenchmarkTask[]>('/api/tasks'),
@@ -54,9 +57,22 @@ export const api = {
         method: 'PATCH',
         body: JSON.stringify(data),
       }),
+    run: (id: string, payload?: { config?: { apiKey?: string; baseUrl?: string } }) =>
+      request<{ experiment: ExperimentConfig; pairsCreated: ArenaPair[] }>(
+        `/api/experiments/${id}/run`,
+        {
+          method: 'POST',
+          body: JSON.stringify(payload ?? {}),
+        },
+      ),
   },
   arena: {
     list: () => request<ArenaPair[]>('/api/arena'),
+    generate: (payload: GeneratePairPayload) =>
+      request<ArenaPair>('/api/arena/generate', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }),
     vote: (
       id: string,
       payload: { vote: VoteResult; rubricA?: RubricScores | null; rubricB?: RubricScores | null },
@@ -65,6 +81,17 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(payload),
       }),
+    remove: (id: string) => request<void>(`/api/arena/${id}`, { method: 'DELETE' }),
+  },
+  llm: {
+    verify: (payload: { apiKey?: string; baseUrl?: string; model?: string }) =>
+      request<{ ok: boolean; model: string; latencyMs: number; response: string }>(
+        '/api/llm/verify',
+        {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        },
+      ),
   },
   analytics: {
     overview: () =>
