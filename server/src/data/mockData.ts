@@ -8,19 +8,21 @@ import type {
   PromptVariant,
 } from '../types/index.ts'
 
+/**
+ * Drabinka 10 modeli OpenRouter: free → premium (ceny ~prompt/completion za 1M tok.).
+ * Dobór celowo z różnych przedziałów jakości/kosztu, żeby różnice były widoczne w Arenie.
+ */
 export const models: ModelInfo[] = [
-  { id: 'google/gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: 'Google', color: '#4285f4' },
+  { id: 'google/gemma-4-31b-it:free', name: 'Gemma 4 31B (free)', provider: 'Google', color: '#34a853' },
+  { id: 'meta-llama/llama-3.1-8b-instruct', name: 'Llama 3.1 8B', provider: 'Meta', color: '#0668E1' },
+  { id: 'openai/gpt-5-nano', name: 'GPT-5 Nano', provider: 'OpenAI', color: '#0d9488' },
   { id: 'openai/gpt-4o-mini', name: 'GPT-4o Mini', provider: 'OpenAI', color: '#10a37f' },
-  { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet', provider: 'Anthropic', color: '#d97706' },
-  { id: 'meta-llama/llama-3.3-70b-instruct', name: 'Llama 3.3 70B', provider: 'Meta', color: '#0668E1' },
   { id: 'deepseek/deepseek-chat', name: 'DeepSeek V3', provider: 'DeepSeek', color: '#4e54c8' },
-  { id: 'mistralai/mistral-large-2411', name: 'Mistral Large', provider: 'Mistral', color: '#f5471a' },
-  { id: 'qwen/qwen-2.5-72b-instruct', name: 'Qwen 2.5 72B', provider: 'Alibaba', color: '#615ced' },
+  { id: 'google/gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: 'Google', color: '#4285f4' },
+  { id: 'mistralai/mistral-large-2512', name: 'Mistral Large 3', provider: 'Mistral', color: '#f5471a' },
+  { id: 'meta-llama/llama-3.3-70b-instruct', name: 'Llama 3.3 70B', provider: 'Meta', color: '#1d4ed8' },
   { id: 'openai/gpt-4o', name: 'GPT-4o', provider: 'OpenAI', color: '#059669' },
-  // Aliasy zgodne wstecznie
-  { id: 'gpt-4o', name: 'GPT-4o (alias)', provider: 'OpenAI', color: '#10a37f' },
-  { id: 'claude-3.5', name: 'Claude 3.5 (alias)', provider: 'Anthropic', color: '#d97706' },
-  { id: 'gemini-1.5', name: 'Gemini Flash (alias)', provider: 'Google', color: '#4285f4' },
+  { id: 'anthropic/claude-sonnet-4.5', name: 'Claude Sonnet 4.5', provider: 'Anthropic', color: '#d97706' },
 ]
 
 export const benchmarkTasks: BenchmarkTask[] = [
@@ -196,151 +198,23 @@ Kryteria poprawności:
   },
 ]
 
-export const experiments: ExperimentConfig[] = [
-  {
-    id: 'exp-001',
-    name: 'Pojedynek modeli Gemini vs GPT',
-    modelIds: ['google/gemini-2.5-flash', 'openai/gpt-4o-mini'],
-    promptVariant: 'A',
-    temperature: 0.2,
-    maxTokens: 1024,
-    trials: 3,
-    taskIds: ['task-001', 'task-003', 'task-007', 'task-009'],
-    status: 'draft',
-    createdAt: '2026-11-18T10:00:00Z',
-  },
-  {
-    id: 'exp-002',
-    name: 'Prompt ablation B vs C',
-    modelIds: ['google/gemini-2.5-flash', 'anthropic/claude-3.5-sonnet'],
-    promptVariant: 'C',
-    temperature: 0.0,
-    maxTokens: 1500,
-    trials: 2,
-    taskIds: ['task-002', 'task-005', 'task-008', 'task-011'],
-    status: 'draft',
-    createdAt: '2026-11-18T11:30:00Z',
-  },
-]
+/** Brak seedowanych eksperymentów — powstają dopiero przy realnym Run / teście uniwersalnym. */
+export const experiments: ExperimentConfig[] = []
 
 // Usunięto zmockowane odpowiedzi sztucznych par — od teraz każda para jest generowana przez prawdziwe API modeli!
 export const arenaPairs: ArenaPair[] = []
 
-export const leaderboard: LeaderboardEntry[] = [
-  {
-    modelId: 'google/gemini-2.5-flash',
-    wins: 0,
-    losses: 0,
-    ties: 0,
-    bothBad: 0,
-    elo: 1200,
-    avgScore: 0,
-    avgLatencyMs: 0,
-    totalCostUsd: 0,
-    hallucinationRate: 0,
-    errorRate: 0,
-    categoryScores: {
-      programowanie: 0,
-      logika: 0,
-      streszczanie: 0,
-      instrukcje: 0,
-      wiedza: 0,
-    },
-  },
-  {
-    modelId: 'openai/gpt-4o-mini',
-    wins: 0,
-    losses: 0,
-    ties: 0,
-    bothBad: 0,
-    elo: 1200,
-    avgScore: 0,
-    avgLatencyMs: 0,
-    totalCostUsd: 0,
-    hallucinationRate: 0,
-    errorRate: 0,
-    categoryScores: {
-      programowanie: 0,
-      logika: 0,
-      streszczanie: 0,
-      instrukcje: 0,
-      wiedza: 0,
-    },
-  },
-  {
-    modelId: 'anthropic/claude-3.5-sonnet',
-    wins: 0,
-    losses: 0,
-    ties: 0,
-    bothBad: 0,
-    elo: 1250,
-    avgScore: 0,
-    avgLatencyMs: 0,
-    totalCostUsd: 0,
-    hallucinationRate: 0,
-    errorRate: 0,
-    categoryScores: {
-      programowanie: 0,
-      logika: 0,
-      streszczanie: 0,
-      instrukcje: 0,
-      wiedza: 0,
-    },
-  },
-  {
-    modelId: 'meta-llama/llama-3.3-70b-instruct',
-    wins: 0,
-    losses: 0,
-    ties: 0,
-    bothBad: 0,
-    elo: 1180,
-    avgScore: 0,
-    avgLatencyMs: 0,
-    totalCostUsd: 0,
-    hallucinationRate: 0,
-    errorRate: 0,
-    categoryScores: {
-      programowanie: 0,
-      logika: 0,
-      streszczanie: 0,
-      instrukcje: 0,
-      wiedza: 0,
-    },
-  },
-  {
-    modelId: 'deepseek/deepseek-chat',
-    wins: 0,
-    losses: 0,
-    ties: 0,
-    bothBad: 0,
-    elo: 1210,
-    avgScore: 0,
-    avgLatencyMs: 0,
-    totalCostUsd: 0,
-    hallucinationRate: 0,
-    errorRate: 0,
-    categoryScores: {
-      programowanie: 0,
-      logika: 0,
-      streszczanie: 0,
-      instrukcje: 0,
-      wiedza: 0,
-    },
-  },
-]
+/** Ranking i statystyki budowane wyłącznie z realnych ocen — bez seedowanych wyników. */
+export const leaderboard: LeaderboardEntry[] = []
 
-export const categoryStats: CategoryStat[] = [
-  { category: 'programowanie', avgScore: 0, comparisons: 0, hallucinations: 0 },
-  { category: 'logika', avgScore: 0, comparisons: 0, hallucinations: 0 },
-  { category: 'streszczanie', avgScore: 0, comparisons: 0, hallucinations: 0 },
-  { category: 'instrukcje', avgScore: 0, comparisons: 0, hallucinations: 0 },
-  { category: 'wiedza', avgScore: 0, comparisons: 0, hallucinations: 0 },
-]
+export const categoryStats: CategoryStat[] = []
 
-export const promptVariantPerformance = [
-  { variant: 'A', avgScore: 0, winRate: 0, hallucinations: 0, avgLatency: 0 },
-  { variant: 'B', avgScore: 0, winRate: 0, hallucinations: 0, avgLatency: 0 },
-  { variant: 'C', avgScore: 0, winRate: 0, hallucinations: 0, avgLatency: 0 },
-]
+export const promptVariantPerformance: Array<{
+  variant: string
+  avgScore: number
+  winRate: number
+  hallucinations: number
+  avgLatency: number
+}> = []
 
 export const costOverTime: Array<{ day: string; cost: number; comparisons: number }> = []

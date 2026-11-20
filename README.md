@@ -16,7 +16,7 @@ Aplikacja nie korzysta ze zmockowanych odpowiedzi — odpytuje modele w czasie r
 Kliknij przycisk **„Ustawienia API ⚙️”** w menu bocznym lub na pasku Areny. Możesz tam:
 - Wkleić swój klucz API (np. z [openrouter.ai/keys](https://openrouter.ai/keys)) — zostanie bezpiecznie zapisany w `localStorage` Twojej przeglądarki.
 - Zmienić **Base URL** (domyślnie `https://openrouter.ai/api/v1`, ale możesz podać oficjalne OpenAI `https://api.openai.com/v1`, Groq `https://api.groq.com/openai/v1` czy lokalną Ollamę `http://localhost:11434/v1`).
-- Wybrać domyślne modele do pojedynków (np. `google/gemini-2.5-flash`, `openai/gpt-4o-mini`, `anthropic/claude-3.5-sonnet`).
+- Wybrać domyślne modele do pojedynków (np. `google/gemma-4-31b-it:free`, `openai/gpt-4o-mini`, `anthropic/claude-sonnet-4.5`).
 - Przetestować połączenie przyciskiem **„Testuj połączenie”**.
 
 ### 2. Za pomocą pliku `.env`
@@ -51,8 +51,11 @@ Uruchomienie osobno:
 ```bash
 npm run dev:web   # uruchamia tylko frontend (Vite)
 npm run dev:api   # uruchamia tylko backend (Express + TSX)
-npm run db:reset  # resetuje bazę danych SQLite do czystego stanu
+npm run db:reset     # usuwa lokalną bazę (przy starcie API wczyta snapshot demo)
+npm run db:snapshot  # odświeża server/data/demo.sqlite z bieżących wyników (do commit)
 ```
+
+Lokalna baza (`server/data/modeleval.sqlite`) jest w `.gitignore`. W repo jest snapshot **`server/data/demo.sqlite`** (ranking + ocenione pary) — przy pierwszym starcie API, gdy brakuje lokalnej bazy, jest z niego kopiowany.
 
 ---
 

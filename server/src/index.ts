@@ -4,21 +4,25 @@ import { fileURLToPath } from 'node:url'
 import cors from 'cors'
 import express from 'express'
 import {
+  applyJudgmentToPair,
   applyVoteToLeaderboard,
   db,
   ensureExperimentExists,
   ensureModelExists,
   ensureTaskExists,
   mapPair,
+  recordDailyCost,
   type ArenaPairRow,
   weightedRubric,
 } from './db.ts'
+import { judgePairwise } from './services/judge.ts'
 import {
   callLlmChat,
   normalizeBaseUrl,
   resolveApiKey,
   resolveModelName,
 } from './services/llm.ts'
+import { generateArenaPair } from './services/pairFactory.ts'
 import type {
   BenchmarkTask,
   ExperimentConfig,
@@ -67,6 +71,10 @@ app.get('/api/config', (_req, res) => {
     baseUrl: normalizeBaseUrl(),
     defaultModelA: process.env.DEFAULT_MODEL_A || 'google/gemini-2.5-flash',
     defaultModelB: process.env.DEFAULT_MODEL_B || 'openai/gpt-4o-mini',
+    defaultJudgeModel:
+      process.env.DEFAULT_JUDGE_MODEL ||
+      process.env.DEFAULT_MODEL_A ||
+      'google/gemini-2.5-flash',
   })
 })
 
@@ -446,6 +454,239 @@ app.post('/api/arena/:id/vote', (req, res) => {
   res.json(mapPair(updated))
 })
 
+async function judgeStoredPair(
+  row: ArenaPairRow,
+  config: { apiKey?: string; baseUrl?: string; judgeModel?: string },
+) {
+  const taskRow = db.prepare(`SELECT * FROM tasks WHERE id = ?`).get(row.task_id) as
+    | Parameters<typeof mapTask>[0]
+    | undefined
+  const task = taskRow
+    ? mapTask(taskRow)
+    : {
+        id: row.task_id,
+        title: row.task_id,
+        content: row.prompt_text,
+        category: 'wiedza' as const,
+        criteria: 'Ogólna jakość odpowiedzi',
+        expectedElements: [] as string[],
+        difficulty: 2 as const,
+      }
+
+  const judgment = await judgePairwise(
+    {
+      taskTitle: task.title,
+      taskContent: task.content,
+      criteria: task.criteria,
+      expectedElements: task.expectedElements,
+      category: task.category,
+      promptText: row.prompt_text,
+      responseA: row.model_a_content,
+      responseB: row.model_b_content,
+    },
+    {
+      apiKey: config.apiKey,
+      baseUrl: config.baseUrl,
+      judgeModel: config.judgeModel,
+      model: config.judgeModel || process.env.DEFAULT_JUDGE_MODEL || 'google/gemini-2.5-flash',
+    },
+  )
+
+  applyJudgmentToPair({
+    pairId: row.id,
+    vote: judgment.vote,
+    rubricA: judgment.rubricA,
+    rubricB: judgment.rubricB,
+    hallucinationA: judgment.hallucinationA,
+    hallucinationB: judgment.hallucinationB,
+    previousVote: row.vote,
+    modelAId: row.model_a_id,
+    modelBId: row.model_b_id,
+    category: task.category,
+    promptVariant: row.prompt_variant,
+    pairCostUsd: row.model_a_cost_usd + row.model_b_cost_usd,
+    judgeCostUsd: judgment.costUsd,
+  })
+
+  const updated = db.prepare(`SELECT * FROM arena_pairs WHERE id = ?`).get(row.id) as ArenaPairRow
+  return { pair: mapPair(updated), judgment }
+}
+
+app.post('/api/arena/:id/judge', async (req, res) => {
+  const row = db.prepare(`SELECT * FROM arena_pairs WHERE id = ?`).get(req.params.id) as
+    | ArenaPairRow
+    | undefined
+  if (!row) {
+    res.status(404).json({ error: 'Pair not found' })
+    return
+  }
+
+  const body = req.body as {
+    config?: { apiKey?: string; baseUrl?: string; judgeModel?: string }
+  }
+
+  try {
+    const result = await judgeStoredPair(row, body.config ?? {})
+    res.json(result)
+  } catch (err: unknown) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) })
+  }
+})
+
+app.post('/api/arena/judge-pending', async (req, res) => {
+  const body = req.body as {
+    experimentId?: string
+    config?: { apiKey?: string; baseUrl?: string; judgeModel?: string }
+  }
+  const rows = (
+    body.experimentId
+      ? db
+          .prepare(`SELECT * FROM arena_pairs WHERE vote IS NULL AND experiment_id = ? ORDER BY id`)
+          .all(body.experimentId)
+      : db.prepare(`SELECT * FROM arena_pairs WHERE vote IS NULL ORDER BY id`).all()
+  ) as ArenaPairRow[]
+
+  const judged = []
+  const errors: Array<{ pairId: string; error: string }> = []
+
+  for (const row of rows) {
+    try {
+      judged.push(await judgeStoredPair(row, body.config ?? {}))
+    } catch (err: unknown) {
+      errors.push({
+        pairId: row.id,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+
+  res.json({
+    judgedCount: judged.length,
+    errorCount: errors.length,
+    results: judged,
+    errors,
+  })
+})
+
+app.post('/api/judge/universal', async (req, res) => {
+  const body = req.body as {
+    modelAId?: string
+    modelBId?: string
+    promptVariant?: PromptVariantId
+    taskIds?: string[]
+    temperature?: number
+    maxTokens?: number
+    judgeModel?: string
+    name?: string
+    config?: { apiKey?: string; baseUrl?: string }
+  }
+
+  const modelAId = resolveModelName(
+    body.modelAId || process.env.DEFAULT_MODEL_A || 'google/gemini-2.5-flash',
+  )
+  const modelBId = resolveModelName(
+    body.modelBId || process.env.DEFAULT_MODEL_B || 'openai/gpt-4o-mini',
+  )
+  if (modelAId === modelBId) {
+    res.status(400).json({ error: 'Wybierz dwa różne modele do porównania.' })
+    return
+  }
+
+  const promptVariant = body.promptVariant ?? 'B'
+  const allTasks = db.prepare(`SELECT * FROM tasks ORDER BY id`).all() as Parameters<
+    typeof mapTask
+  >[0][]
+  const selected =
+    body.taskIds && body.taskIds.length > 0
+      ? allTasks.filter((t) => body.taskIds!.includes(t.id))
+      : allTasks
+
+  if (selected.length === 0) {
+    res.status(400).json({ error: 'Brak zadań w benchmarku do oceny.' })
+    return
+  }
+
+  const count = (db.prepare(`SELECT COUNT(*) AS c FROM experiments`).get() as { c: number }).c
+  const expId = `exp-univ-${String(count + 1).padStart(3, '0')}`
+  const expName =
+    body.name?.trim() ||
+    `Universal judge · ${modelAId.split('/').pop()} vs ${modelBId.split('/').pop()}`
+
+  db.prepare(
+    `INSERT INTO experiments
+     (id, name, model_ids, prompt_variant, temperature, max_tokens, trials, task_ids, status, created_at)
+     VALUES (@id, @name, @model_ids, @prompt_variant, @temperature, @max_tokens, @trials, @task_ids, @status, @created_at)`,
+  ).run({
+    id: expId,
+    name: expName,
+    model_ids: JSON.stringify([modelAId, modelBId]),
+    prompt_variant: promptVariant,
+    temperature: body.temperature ?? 0.2,
+    max_tokens: body.maxTokens ?? 1024,
+    trials: 1,
+    task_ids: JSON.stringify(selected.map((t) => t.id)),
+    status: 'running',
+    created_at: new Date().toISOString(),
+  })
+
+  const results: Array<{
+    pair: ReturnType<typeof mapPair>
+    judgment: Awaited<ReturnType<typeof judgeStoredPair>>['judgment']
+  }> = []
+  const errors: Array<{ taskId: string; error: string }> = []
+
+  try {
+    for (const taskRow of selected) {
+      const task = mapTask(taskRow)
+      try {
+        const pairRow = await generateArenaPair({
+          taskId: task.id,
+          taskContent: task.content,
+          taskTitle: task.title,
+          criteria: task.criteria,
+          experimentId: expId,
+          experimentName: expName,
+          promptVariant,
+          modelAId,
+          modelBId,
+          temperature: body.temperature ?? 0.2,
+          maxTokens: body.maxTokens ?? 1024,
+          apiKey: body.config?.apiKey,
+          baseUrl: body.config?.baseUrl,
+        })
+
+        const judged = await judgeStoredPair(pairRow, {
+          apiKey: body.config?.apiKey,
+          baseUrl: body.config?.baseUrl,
+          judgeModel: body.judgeModel,
+        })
+        results.push(judged)
+      } catch (err: unknown) {
+        errors.push({
+          taskId: task.id,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    }
+  } finally {
+    db.prepare(`UPDATE experiments SET status = 'completed' WHERE id = ?`).run(expId)
+  }
+
+  const experiment = mapExperiment(
+    db.prepare(`SELECT * FROM experiments WHERE id = ?`).get(expId) as Parameters<
+      typeof mapExperiment
+    >[0],
+  )
+
+  res.status(201).json({
+    experiment,
+    judgedCount: results.length,
+    errorCount: errors.length,
+    results,
+    errors,
+  })
+})
+
 app.delete('/api/arena/:id', (req, res) => {
   const info = db.prepare(`DELETE FROM arena_pairs WHERE id = ?`).run(req.params.id)
   if (info.changes === 0) {
@@ -553,15 +794,11 @@ app.post('/api/arena/generate', async (req, res) => {
           error: resB.reason instanceof Error ? resB.reason.message : String(resB.reason),
         }
 
-  // Zwróć natychmiast błąd, jeśli wystąpił brak klucza API
-  if (outcomeA.error && outcomeB.error) {
-    if (
-      outcomeA.error.includes('Brak klucza API') ||
-      outcomeA.error.includes('401')
-    ) {
-      res.status(400).json({ error: outcomeA.error })
-      return
-    }
+  // Nie zapisuj porównań z błędem API (czerwone w Arenie)
+  if (outcomeA.error || outcomeB.error) {
+    const msg = [outcomeA.error, outcomeB.error].filter(Boolean).join(' | ')
+    res.status(502).json({ error: `Błąd API modelu — para nie została zapisana: ${msg}` })
+    return
   }
 
   const pairId = `pair-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
@@ -617,6 +854,48 @@ app.post('/api/arena/generate', async (req, res) => {
   res.status(201).json(mapPair(newPairRow))
 })
 
+/** Unikalne pary (pełny round-robin). */
+function fullModelPairs(modelIds: string[]): Array<[string, string]> {
+  const pairs: Array<[string, string]> = []
+  for (let i = 0; i < modelIds.length; i++) {
+    for (let j = i + 1; j < modelIds.length; j++) {
+      pairs.push([modelIds[i], modelIds[j]])
+    }
+  }
+  return pairs
+}
+
+/**
+ * Pary okrężne: każdy model gra z sąsiadem (po tasowaniu).
+ * Dla N>4 tańsze niż pełny RR, a każdy model trafia do rankingu.
+ */
+function circleModelPairs(modelIds: string[]): Array<[string, string]> {
+  if (modelIds.length < 2) return []
+  if (modelIds.length === 2) return [[modelIds[0], modelIds[1]]]
+  const shuffled = [...modelIds]
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
+  }
+  const pairs: Array<[string, string]> = []
+  for (let i = 0; i < shuffled.length; i++) {
+    pairs.push([shuffled[i], shuffled[(i + 1) % shuffled.length]])
+  }
+  return pairs
+}
+
+function buildModelPairs(
+  modelIds: string[],
+  mode: 'auto' | 'full' | 'circle' = 'auto',
+): { pairs: Array<[string, string]>; mode: 'full' | 'circle' } {
+  const resolved =
+    mode === 'full' ? 'full' : mode === 'circle' ? 'circle' : modelIds.length <= 4 ? 'full' : 'circle'
+  return {
+    mode: resolved,
+    pairs: resolved === 'full' ? fullModelPairs(modelIds) : circleModelPairs(modelIds),
+  }
+}
+
 app.post('/api/experiments/:id/run', async (req, res) => {
   const row = db.prepare(`SELECT * FROM experiments WHERE id = ?`).get(req.params.id) as
     | Parameters<typeof mapExperiment>[0]
@@ -632,138 +911,96 @@ app.post('/api/experiments/:id/run', async (req, res) => {
     return
   }
 
-  const modelAId = resolveModelName(exp.modelIds[0])
-  const modelBId = resolveModelName(exp.modelIds[1])
-  ensureModelExists(modelAId)
-  ensureModelExists(modelBId)
+  const modelIds = [...new Set(exp.modelIds.map((id) => resolveModelName(id)))]
+  if (modelIds.length < 2) {
+    res.status(400).json({ error: 'Eksperyment wymaga co najmniej 2 różnych modeli.' })
+    return
+  }
+  for (const id of modelIds) ensureModelExists(id)
 
-  // Oznacz jako running
+  const bodyConfig = req.body as {
+    autoJudge?: boolean
+    judgeModel?: string
+    pairingMode?: 'auto' | 'full' | 'circle'
+    config?: { apiKey?: string; baseUrl?: string; judgeModel?: string }
+  }
+  const llmConfig = bodyConfig?.config ?? {}
+  const autoJudge = Boolean(bodyConfig.autoJudge)
+  const { pairs: modelPairs, mode: pairingMode } = buildModelPairs(
+    modelIds,
+    bodyConfig.pairingMode ?? 'auto',
+  )
+
   db.prepare(`UPDATE experiments SET status = 'running' WHERE id = ?`).run(exp.id)
 
   const taskIds = exp.taskIds.length > 0 ? exp.taskIds : ['task-001']
+  const trials = Math.max(1, exp.trials || 1)
   const generatedPairs: ArenaPairRow[] = []
+  const judgedResults: Array<Awaited<ReturnType<typeof judgeStoredPair>>> = []
+  const errors: Array<{ taskId: string; modelA: string; modelB: string; error: string }> = []
 
-  const variantRow = db
-    .prepare(`SELECT template FROM prompt_variants WHERE id = ?`)
-    .get(exp.promptVariant) as { template: string } | undefined
-  const template = variantRow?.template ?? '{{task}}'
+  try {
+    for (let trial = 0; trial < trials; trial++) {
+      for (const taskId of taskIds) {
+        const taskRow = db.prepare(`SELECT * FROM tasks WHERE id = ?`).get(taskId) as
+          | Parameters<typeof mapTask>[0]
+          | undefined
+        if (!taskRow) continue
+        const task = mapTask(taskRow)
 
-  const bodyConfig = req.body as { config?: { apiKey?: string; baseUrl?: string } }
-  const llmConfig = bodyConfig?.config ?? {}
+        // Circle: nowe sąsiedztwo na każde zadanie → szersze pokrycie Elo
+        const pairsForTask =
+          pairingMode === 'circle' ? circleModelPairs(modelIds) : modelPairs
 
-  for (const taskId of taskIds) {
-    const taskRow = db.prepare(`SELECT * FROM tasks WHERE id = ?`).get(taskId) as
-      | Parameters<typeof mapTask>[0]
-      | undefined
-    if (!taskRow) continue
+        for (const [modelAId, modelBId] of pairsForTask) {
+          try {
+            const pairRow = await generateArenaPair({
+              taskId: task.id,
+              taskContent: task.content,
+              taskTitle: task.title,
+              criteria: task.criteria,
+              experimentId: exp.id,
+              experimentName: exp.name,
+              promptVariant: exp.promptVariant,
+              modelAId,
+              modelBId,
+              temperature: exp.temperature,
+              maxTokens: exp.maxTokens,
+              apiKey: llmConfig.apiKey,
+              baseUrl: llmConfig.baseUrl,
+            })
+            generatedPairs.push(pairRow)
 
-    const task = mapTask(taskRow)
-    let renderedPrompt = template.replace('{{task}}', task.content)
-    if (renderedPrompt.includes('{{criteria}}')) {
-      renderedPrompt = renderedPrompt.replace('{{criteria}}', task.criteria)
-    }
-
-    const messages: Array<{ role: 'user'; content: string }> = [
-      { role: 'user', content: renderedPrompt },
-    ]
-
-    const [resA, resB] = await Promise.allSettled([
-      callLlmChat(messages, {
-        model: modelAId,
-        apiKey: llmConfig.apiKey,
-        baseUrl: llmConfig.baseUrl,
-        temperature: exp.temperature,
-        maxTokens: exp.maxTokens,
-      }),
-      callLlmChat(messages, {
-        model: modelBId,
-        apiKey: llmConfig.apiKey,
-        baseUrl: llmConfig.baseUrl,
-        temperature: exp.temperature,
-        maxTokens: exp.maxTokens,
-      }),
-    ])
-
-    const outcomeA =
-      resA.status === 'fulfilled'
-        ? resA.value
-        : {
-            content: `[BŁĄD MODELU A]: ${resA.reason instanceof Error ? resA.reason.message : String(resA.reason)}`,
-            latencyMs: 0,
-            tokensIn: 0,
-            tokensOut: 0,
-            costUsd: 0,
-            modelId: modelAId,
-            error: resA.reason instanceof Error ? resA.reason.message : String(resA.reason),
+            if (autoJudge) {
+              try {
+                judgedResults.push(
+                  await judgeStoredPair(pairRow, {
+                    apiKey: llmConfig.apiKey,
+                    baseUrl: llmConfig.baseUrl,
+                    judgeModel: bodyConfig.judgeModel || llmConfig.judgeModel,
+                  }),
+                )
+              } catch {
+                recordDailyCost(pairRow.model_a_cost_usd + pairRow.model_b_cost_usd, 0)
+              }
+            } else {
+              recordDailyCost(pairRow.model_a_cost_usd + pairRow.model_b_cost_usd, 0)
+            }
+          } catch (err: unknown) {
+            errors.push({
+              taskId: task.id,
+              modelA: modelAId,
+              modelB: modelBId,
+              error: err instanceof Error ? err.message : String(err),
+            })
           }
-
-    const outcomeB =
-      resB.status === 'fulfilled'
-        ? resB.value
-        : {
-            content: `[BŁĄD MODELU B]: ${resB.reason instanceof Error ? resB.reason.message : String(resB.reason)}`,
-            latencyMs: 0,
-            tokensIn: 0,
-            tokensOut: 0,
-            costUsd: 0,
-            modelId: modelBId,
-            error: resB.reason instanceof Error ? resB.reason.message : String(resB.reason),
-          }
-
-    const pairId = `pair-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
-    const leftIsA = Math.random() < 0.5 ? 1 : 0
-
-    const pairRow: ArenaPairRow = {
-      id: pairId,
-      task_id: task.id,
-      experiment_id: exp.id,
-      prompt_variant: exp.promptVariant,
-      prompt_text: renderedPrompt,
-      model_a_id: modelAId,
-      model_a_content: outcomeA.content,
-      model_a_latency_ms: outcomeA.latencyMs,
-      model_a_tokens_in: outcomeA.tokensIn,
-      model_a_tokens_out: outcomeA.tokensOut,
-      model_a_cost_usd: outcomeA.costUsd,
-      model_a_hallucinated: 0,
-      model_a_error: outcomeA.error ?? null,
-      model_b_id: modelBId,
-      model_b_content: outcomeB.content,
-      model_b_latency_ms: outcomeB.latencyMs,
-      model_b_tokens_in: outcomeB.tokensIn,
-      model_b_tokens_out: outcomeB.tokensOut,
-      model_b_cost_usd: outcomeB.costUsd,
-      model_b_hallucinated: 0,
-      model_b_error: outcomeB.error ?? null,
-      left_is_a: leftIsA,
-      vote: null,
-      rubric_a: null,
-      rubric_b: null,
-      judged_at: null,
+        }
+      }
     }
-
-    db.prepare(`
-      INSERT INTO arena_pairs (
-        id, task_id, experiment_id, prompt_variant, prompt_text,
-        model_a_id, model_a_content, model_a_latency_ms, model_a_tokens_in, model_a_tokens_out,
-        model_a_cost_usd, model_a_hallucinated, model_a_error,
-        model_b_id, model_b_content, model_b_latency_ms, model_b_tokens_in, model_b_tokens_out,
-        model_b_cost_usd, model_b_hallucinated, model_b_error,
-        left_is_a, vote, rubric_a, rubric_b, judged_at
-      ) VALUES (
-        @id, @task_id, @experiment_id, @prompt_variant, @prompt_text,
-        @model_a_id, @model_a_content, @model_a_latency_ms, @model_a_tokens_in, @model_a_tokens_out,
-        @model_a_cost_usd, @model_a_hallucinated, @model_a_error,
-        @model_b_id, @model_b_content, @model_b_latency_ms, @model_b_tokens_in, @model_b_tokens_out,
-        @model_b_cost_usd, @model_b_hallucinated, @model_b_error,
-        @left_is_a, @vote, @rubric_a, @rubric_b, @judged_at
-      )
-    `).run(pairRow)
-
-    generatedPairs.push(pairRow)
+  } finally {
+    db.prepare(`UPDATE experiments SET status = 'completed' WHERE id = ?`).run(exp.id)
   }
 
-  db.prepare(`UPDATE experiments SET status = 'completed' WHERE id = ?`).run(exp.id)
   const updatedExp = mapExperiment(
     db.prepare(`SELECT * FROM experiments WHERE id = ?`).get(exp.id) as Parameters<
       typeof mapExperiment
@@ -773,10 +1010,23 @@ app.post('/api/experiments/:id/run', async (req, res) => {
   res.json({
     experiment: updatedExp,
     pairsCreated: generatedPairs.map(mapPair),
+    judgedCount: judgedResults.length,
+    judged: judgedResults,
+    pairingMode,
+    modelCount: modelIds.length,
+    errorCount: errors.length,
+    errors,
   })
 })
 
 /* ─── Analytics ─── */
+/** Modele z co najmniej jednym realnym wynikiem pairwise (głos / ocena). */
+const TESTED_LEADERBOARD_SQL = `
+  SELECT * FROM leaderboard
+  WHERE (wins + losses + ties + both_bad) > 0
+  ORDER BY elo DESC
+`
+
 app.get('/api/analytics/overview', (_req, res) => {
   const pairs = (
     db.prepare(`SELECT COUNT(*) AS c FROM arena_pairs`).get() as { c: number }
@@ -787,17 +1037,27 @@ app.get('/api/analytics/overview', (_req, res) => {
     }
   ).c
   const cost = (
-    db.prepare(`SELECT COALESCE(SUM(total_cost_usd), 0) AS s FROM leaderboard`).get() as {
-      s: number
-    }
+    db
+      .prepare(
+        `SELECT COALESCE(SUM(total_cost_usd), 0) AS s FROM leaderboard
+         WHERE (wins + losses + ties + both_bad) > 0`,
+      )
+      .get() as { s: number }
   ).s
   const avgHalluc = (
     db
-      .prepare(`SELECT COALESCE(AVG(hallucination_rate), 0) AS a FROM leaderboard`)
+      .prepare(
+        `SELECT COALESCE(AVG(hallucination_rate), 0) AS a FROM leaderboard
+         WHERE (wins + losses + ties + both_bad) > 0`,
+      )
       .get() as { a: number }
   ).a
   const top = db
-    .prepare(`SELECT model_id, elo FROM leaderboard ORDER BY elo DESC LIMIT 1`)
+    .prepare(
+      `SELECT model_id, elo FROM leaderboard
+       WHERE (wins + losses + ties + both_bad) > 0
+       ORDER BY elo DESC LIMIT 1`,
+    )
     .get() as { model_id: string; elo: number } | undefined
 
   res.json({
@@ -812,9 +1072,7 @@ app.get('/api/analytics/overview', (_req, res) => {
 })
 
 app.get('/api/analytics/leaderboard', (_req, res) => {
-  const rows = db
-    .prepare(`SELECT * FROM leaderboard ORDER BY elo DESC`)
-    .all() as Array<{
+  const rows = db.prepare(TESTED_LEADERBOARD_SQL).all() as Array<{
     model_id: string
     wins: number
     losses: number
@@ -847,7 +1105,9 @@ app.get('/api/analytics/leaderboard', (_req, res) => {
 })
 
 app.get('/api/analytics/categories', (_req, res) => {
-  const rows = db.prepare(`SELECT * FROM category_stats`).all() as Array<{
+  const rows = db
+    .prepare(`SELECT * FROM category_stats WHERE comparisons > 0 ORDER BY category`)
+    .all() as Array<{
     category: string
     avg_score: number
     comparisons: number
@@ -864,7 +1124,11 @@ app.get('/api/analytics/categories', (_req, res) => {
 })
 
 app.get('/api/analytics/prompt-variants', (_req, res) => {
-  const rows = db.prepare(`SELECT * FROM prompt_variant_stats ORDER BY variant`).all() as Array<{
+  const rows = db
+    .prepare(
+      `SELECT * FROM prompt_variant_stats WHERE avg_score > 0 OR win_rate > 0 ORDER BY variant`,
+    )
+    .all() as Array<{
     variant: string
     avg_score: number
     win_rate: number
@@ -889,7 +1153,7 @@ app.get('/api/analytics/cost-over-time', (_req, res) => {
 
 app.get('/api/analytics/export', (_req, res) => {
   const leaderboard = (
-    db.prepare(`SELECT * FROM leaderboard ORDER BY elo DESC`).all() as Array<Record<string, unknown>>
+    db.prepare(TESTED_LEADERBOARD_SQL).all() as Array<Record<string, unknown>>
   ).map((r) => ({
     modelId: r.model_id,
     wins: r.wins,

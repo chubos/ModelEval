@@ -96,8 +96,21 @@ export function Dashboard() {
     )
   }
 
-  if (error || !overview || !leaderboard.length) {
+  if (error || !overview) {
     return <div className="p-6 text-arena-danger">{error ?? 'Brak danych'}</div>
+  }
+
+  if (!leaderboard.length) {
+    return (
+      <div className="animate-fade-in space-y-4 p-6">
+        <h1 className="text-xl font-semibold text-arena-text">Dashboard i ranking</h1>
+        <p className="rounded-xl border border-arena-border bg-arena-card px-4 py-6 text-sm text-arena-muted">
+          Brak przetestowanych modeli. Uruchom pojedynek w Arenie albo{' '}
+          <span className="text-arena-text">Test uniwersalny</span> z sędzią LLM — ranking pokaże
+          tylko modele z realnymi ocenami.
+        </p>
+      </div>
+    )
   }
 
   const top = leaderboard[0]

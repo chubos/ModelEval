@@ -18,8 +18,15 @@ import type { ArenaPair, RubricScores, VoteResult } from './types/index.ts'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const dataDir = path.join(__dirname, '..', 'data')
 const dbPath = path.join(dataDir, 'modeleval.sqlite')
+const demoDbPath = path.join(dataDir, 'demo.sqlite')
 
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true })
+
+/** Przy pierwszym starcie (brak lokalnej bazy) skopiuj snapshot demo z repo. */
+if (!fs.existsSync(dbPath) && fs.existsSync(demoDbPath)) {
+  fs.copyFileSync(demoDbPath, dbPath)
+  console.log(`[db] Restored demo snapshot → ${dbPath}`)
+}
 
 export const db = new Database(dbPath)
 db.pragma('journal_mode = WAL')
@@ -140,6 +147,17 @@ export function initSchema() {
       value TEXT NOT NULL
     );
   `)
+}
+
+/** Upsert katalogu modeli z mockData (działa też po pierwszym seedzie). */
+function syncCatalogModels() {
+  const insertModel = db.prepare(
+    `INSERT OR REPLACE INTO models (id, name, provider, color) VALUES (@id, @name, @provider, @color)`,
+  )
+  const tx = db.transaction(() => {
+    for (const m of models) insertModel.run(m)
+  })
+  tx()
 }
 
 function seedIfEmpty() {
@@ -321,6 +339,8 @@ function seedIfEmpty() {
 
 initSchema()
 seedIfEmpty()
+syncCatalogModels()
+maybeRebuildStaleAnalytics()
 
 export type ArenaPairRow = {
   id: string
@@ -510,4 +530,200 @@ export function weightedRubric(scores: RubricScores): number {
     scores.clarity * 0.1 +
     scores.verifiability * 0.1
   )
+}
+
+/**
+ * Czyści seedowane / zniekształcone statystyki i przebudowuje je
+ * wyłącznie z realnych, ocenionych par w arena_pairs.
+ */
+export function rebuildAnalyticsFromPairs() {
+  db.exec(`
+    DELETE FROM leaderboard;
+    DELETE FROM category_stats;
+    DELETE FROM prompt_variant_stats;
+    DELETE FROM cost_daily;
+  `)
+
+  const pairs = db
+    .prepare(
+      `SELECT * FROM arena_pairs WHERE vote IS NOT NULL ORDER BY judged_at ASC, id ASC`,
+    )
+    .all() as ArenaPairRow[]
+
+  for (const row of pairs) {
+    const rubricA = row.rubric_a
+      ? (JSON.parse(row.rubric_a) as RubricScores)
+      : {
+          correctness: 3,
+          instructionFollow: 3,
+          completeness: 3,
+          clarity: 3,
+          verifiability: 3,
+        }
+    const rubricB = row.rubric_b
+      ? (JSON.parse(row.rubric_b) as RubricScores)
+      : {
+          correctness: 3,
+          instructionFollow: 3,
+          completeness: 3,
+          clarity: 3,
+          verifiability: 3,
+        }
+
+    const task = db.prepare(`SELECT category FROM tasks WHERE id = ?`).get(row.task_id) as
+      | { category: string }
+      | undefined
+
+    // previousVote=null: każdy głos z historii ma być policzony od zera
+    applyJudgmentToPair({
+      pairId: row.id,
+      vote: row.vote as VoteResult,
+      rubricA,
+      rubricB,
+      hallucinationA: Boolean(row.model_a_hallucinated),
+      hallucinationB: Boolean(row.model_b_hallucinated),
+      previousVote: null,
+      modelAId: row.model_a_id,
+      modelBId: row.model_b_id,
+      category: task?.category,
+      promptVariant: row.prompt_variant,
+      pairCostUsd: row.model_a_cost_usd + row.model_b_cost_usd,
+      judgeCostUsd: 0,
+    })
+
+    // Nie nadpisuj judged_at / vote — applyJudgment już ustawił te same wartości
+  }
+
+  db.prepare(
+    `INSERT OR REPLACE INTO meta (key, value) VALUES ('analytics_rebuilt_v2', ?)`,
+  ).run(new Date().toISOString())
+
+  console.log(`[db] Rebuilt analytics from ${pairs.length} judged pairs`)
+  return pairs.length
+}
+
+export function maybeRebuildStaleAnalytics() {
+  const flag = db.prepare(`SELECT value FROM meta WHERE key = 'analytics_rebuilt_v2'`).get() as
+    | { value: string }
+    | undefined
+  if (flag) return
+  rebuildAnalyticsFromPairs()
+}
+
+export function recordDailyCost(costUsd: number, comparisons = 1) {
+  const day = new Date().toLocaleDateString('pl-PL', {
+    day: '2-digit',
+    month: '2-digit',
+  })
+  db.prepare(
+    `INSERT INTO cost_daily (day, cost, comparisons) VALUES (@day, @cost, @comparisons)
+     ON CONFLICT(day) DO UPDATE SET
+       cost = cost + excluded.cost,
+       comparisons = comparisons + excluded.comparisons`,
+  ).run({ day, cost: costUsd, comparisons })
+}
+
+export function applyJudgmentToPair(opts: {
+  pairId: string
+  vote: VoteResult
+  rubricA: RubricScores
+  rubricB: RubricScores
+  hallucinationA?: boolean
+  hallucinationB?: boolean
+  previousVote: VoteResult | null
+  modelAId: string
+  modelBId: string
+  category?: string
+  promptVariant?: string
+  pairCostUsd?: number
+  judgeCostUsd?: number
+}) {
+  const judgedAt = new Date().toISOString()
+  db.prepare(
+    `UPDATE arena_pairs SET
+      vote = @vote,
+      rubric_a = @rubric_a,
+      rubric_b = @rubric_b,
+      model_a_hallucinated = @ha,
+      model_b_hallucinated = @hb,
+      judged_at = @judged_at
+     WHERE id = @id`,
+  ).run({
+    id: opts.pairId,
+    vote: opts.vote,
+    rubric_a: JSON.stringify(opts.rubricA),
+    rubric_b: JSON.stringify(opts.rubricB),
+    ha: opts.hallucinationA ? 1 : 0,
+    hb: opts.hallucinationB ? 1 : 0,
+    judged_at: judgedAt,
+  })
+
+  applyVoteToLeaderboard(opts.modelAId, opts.modelBId, opts.vote, opts.previousVote)
+
+  const scoreA = weightedRubric(opts.rubricA)
+  const scoreB = weightedRubric(opts.rubricB)
+  db.prepare(
+    `UPDATE leaderboard SET avg_score = CASE WHEN avg_score = 0 THEN ? ELSE (avg_score * 0.9) + (? * 0.1) END WHERE model_id = ?`,
+  ).run(scoreA, scoreA, opts.modelAId)
+  db.prepare(
+    `UPDATE leaderboard SET avg_score = CASE WHEN avg_score = 0 THEN ? ELSE (avg_score * 0.9) + (? * 0.1) END WHERE model_id = ?`,
+  ).run(scoreB, scoreB, opts.modelBId)
+
+  if (opts.hallucinationA || opts.hallucinationB) {
+    if (opts.hallucinationA) {
+      db.prepare(
+        `UPDATE leaderboard SET hallucination_rate = MIN(1.0, hallucination_rate * 0.9 + 0.1) WHERE model_id = ?`,
+      ).run(opts.modelAId)
+    }
+    if (opts.hallucinationB) {
+      db.prepare(
+        `UPDATE leaderboard SET hallucination_rate = MIN(1.0, hallucination_rate * 0.9 + 0.1) WHERE model_id = ?`,
+      ).run(opts.modelBId)
+    }
+  }
+
+  if (opts.category) {
+    const avg = (scoreA + scoreB) / 2
+    const hall = (opts.hallucinationA ? 1 : 0) + (opts.hallucinationB ? 1 : 0)
+    db.prepare(
+      `INSERT INTO category_stats (category, avg_score, comparisons, hallucinations)
+       VALUES (@category, @avg_score, 1, @hall)
+       ON CONFLICT(category) DO UPDATE SET
+         avg_score = (avg_score * comparisons + excluded.avg_score) / (comparisons + 1),
+         comparisons = comparisons + 1,
+         hallucinations = hallucinations + excluded.hallucinations`,
+    ).run({ category: opts.category, avg_score: avg, hall })
+  }
+
+  if (opts.promptVariant) {
+    const winRate =
+      opts.vote === 'a_wins' || opts.vote === 'b_wins' ? 1 : opts.vote === 'tie' ? 0.5 : 0
+    const avg = (scoreA + scoreB) / 2
+    const hallRate =
+      ((opts.hallucinationA ? 1 : 0) + (opts.hallucinationB ? 1 : 0)) / 2
+    db.prepare(
+      `INSERT INTO prompt_variant_stats (variant, avg_score, win_rate, hallucinations, avg_latency)
+       VALUES (@variant, @avg_score, @win_rate, @hall, 0)
+       ON CONFLICT(variant) DO UPDATE SET
+         avg_score = (avg_score + excluded.avg_score) / 2,
+         win_rate = (win_rate + excluded.win_rate) / 2,
+         hallucinations = (hallucinations + excluded.hallucinations) / 2`,
+    ).run({
+      variant: opts.promptVariant,
+      avg_score: avg,
+      win_rate: winRate,
+      hall: hallRate,
+    })
+  }
+
+  const totalCost = (opts.pairCostUsd ?? 0) + (opts.judgeCostUsd ?? 0)
+  if (totalCost > 0) {
+    recordDailyCost(totalCost, 1)
+    db.prepare(
+      `UPDATE leaderboard SET total_cost_usd = total_cost_usd + ? WHERE model_id = ?`,
+    ).run((opts.pairCostUsd ?? 0) / 2 + (opts.judgeCostUsd ?? 0) / 2, opts.modelAId)
+    db.prepare(
+      `UPDATE leaderboard SET total_cost_usd = total_cost_usd + ? WHERE model_id = ?`,
+    ).run((opts.pairCostUsd ?? 0) / 2 + (opts.judgeCostUsd ?? 0) / 2, opts.modelBId)
+  }
 }

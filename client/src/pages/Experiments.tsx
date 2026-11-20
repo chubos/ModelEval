@@ -10,6 +10,7 @@ import {
   Play,
   Plus,
   Save,
+  Scale,
   Swords,
 } from 'lucide-react'
 import { api } from '../api/client'
@@ -36,16 +37,25 @@ export function Experiments() {
   const [editingTemplate, setEditingTemplate] = useState('')
   const [form, setForm] = useState({
     name: '',
-    modelIds: ['google/gemini-2.5-flash', 'openai/gpt-4o-mini'] as string[],
+    modelIds: ['google/gemma-4-31b-it:free', 'openai/gpt-4o-mini'] as string[],
     promptVariant: 'B' as PromptVariantId,
     temperature: 0.2,
     maxTokens: 1024,
-    trials: 3,
+    trials: 1,
     taskIds: ['task-001', 'task-007'] as string[],
   })
   const [runningExpId, setRunningExpId] = useState<string | null>(null)
   const [runError, setRunError] = useState<string | null>(null)
   const [runSuccess, setRunSuccess] = useState<string | null>(null)
+  const [autoJudge, setAutoJudge] = useState(true)
+  const [universalRunning, setUniversalRunning] = useState(false)
+  const [universalForm, setUniversalForm] = useState({
+    modelAId: 'google/gemma-4-31b-it:free',
+    modelBId: 'openai/gpt-4o-mini',
+    promptVariant: 'B' as PromptVariantId,
+    judgeModel: 'google/gemini-2.5-flash',
+    allTasks: true,
+  })
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -68,6 +78,19 @@ export function Experiments() {
           setSelectedVariant(first.id)
           setEditingTemplate(first.template)
         }
+        const stored = getStoredSettings()
+        setUniversalForm((f) => ({
+          ...f,
+          modelAId: stored.modelA || f.modelAId,
+          modelBId: stored.modelB || f.modelBId,
+        }))
+        setForm((f) => ({
+          ...f,
+          modelIds:
+            stored.modelA && stored.modelB
+              ? [stored.modelA, stored.modelB]
+              : f.modelIds,
+        }))
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : 'Błąd API')
       } finally {
@@ -79,7 +102,35 @@ export function Experiments() {
     }
   }, [])
 
+  useEffect(() => {
+    const syncFromSettings = () => {
+      const stored = getStoredSettings()
+      setUniversalForm((f) => ({
+        ...f,
+        modelAId: stored.modelA || f.modelAId,
+        modelBId: stored.modelB || f.modelBId,
+      }))
+    }
+    window.addEventListener('modeleval-settings-changed', syncFromSettings)
+    return () => window.removeEventListener('modeleval-settings-changed', syncFromSettings)
+  }, [])
+
   const activeVariant = variants.find((v) => v.id === selectedVariant)
+
+  const modelOptions = (() => {
+    const byId = new Map(models.map((m) => [m.id, m]))
+    for (const id of [universalForm.modelAId, universalForm.modelBId, ...form.modelIds]) {
+      if (id && !byId.has(id)) {
+        byId.set(id, {
+          id,
+          name: id.split('/').pop() || id,
+          provider: id.includes('/') ? id.split('/')[0] : 'custom',
+          color: '#3b82f6',
+        })
+      }
+    }
+    return [...byId.values()]
+  })()
 
   const selectVariant = (id: PromptVariantId) => {
     setSelectedVariant(id)
@@ -132,17 +183,59 @@ export function Experiments() {
     setRunSuccess(null)
     try {
       const res = await api.experiments.run(expId, {
+        autoJudge,
+        judgeModel: universalForm.judgeModel,
+        config: {
+          apiKey: stored.apiKey || undefined,
+          baseUrl: stored.baseUrl || undefined,
+          judgeModel: universalForm.judgeModel,
+        },
+      })
+      setExperiments((prev) => prev.map((e) => (e.id === res.experiment.id ? res.experiment : e)))
+      const judged = res.judgedCount ?? 0
+      const pairing =
+        res.pairingMode === 'circle'
+          ? 'okrężne (każdy model z sąsiadem)'
+          : 'pełny round-robin'
+      setRunSuccess(
+        autoJudge
+          ? `Ukończono! ${res.pairsCreated.length} par (${res.modelCount ?? '?'} modeli, ${pairing}), sędzia ocenił ${judged}.` +
+              (res.errorCount ? ` Błędy: ${res.errorCount}.` : '')
+          : `Ukończono! ${res.pairsCreated.length} par (${pairing}).`,
+      )
+    } catch (err: unknown) {
+      setRunError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setRunningExpId(null)
+    }
+  }
+
+  const handleUniversalTest = async () => {
+    const stored = getStoredSettings()
+    setUniversalRunning(true)
+    setRunError(null)
+    setRunSuccess(null)
+    try {
+      const res = await api.judge.universal({
+        modelAId: universalForm.modelAId,
+        modelBId: universalForm.modelBId,
+        promptVariant: universalForm.promptVariant,
+        judgeModel: universalForm.judgeModel,
+        taskIds: universalForm.allTasks ? undefined : form.taskIds,
         config: {
           apiKey: stored.apiKey || undefined,
           baseUrl: stored.baseUrl || undefined,
         },
       })
-      setExperiments((prev) => prev.map((e) => (e.id === res.experiment.id ? res.experiment : e)))
-      setRunSuccess(`Ukończono eksperyment! Wygenerowano ${res.pairsCreated.length} par w Arenie.`)
+      setExperiments((prev) => [res.experiment, ...prev])
+      setRunSuccess(
+        `Test uniwersalny: oceniono ${res.judgedCount}/${res.judgedCount + res.errorCount} zadań. ` +
+          (res.errorCount ? `Błędy: ${res.errorCount}.` : 'Leaderboard zaktualizowany.'),
+      )
     } catch (err: unknown) {
       setRunError(err instanceof Error ? err.message : String(err))
     } finally {
-      setRunningExpId(null)
+      setUniversalRunning(false)
     }
   }
 
@@ -194,6 +287,105 @@ export function Experiments() {
         </div>
       )}
 
+      <Card className="border-arena-accent/30 bg-gradient-to-br from-arena-card to-arena-accent/5">
+        <CardHeader
+          title="Test uniwersalny — sędzia LLM"
+          subtitle="Generuje odpowiedzi na wszystkie zadania benchmarku i od razu ocenia je wspólną rubryką (pairwise + 35/25/20/10/10)"
+          action={<Badge tone="accent">LLM-as-a-judge</Badge>}
+        />
+        <div className="grid gap-4 p-5 md:grid-cols-2 xl:grid-cols-5">
+          <div>
+            <label className="mb-1.5 block text-xs text-arena-muted">Model A</label>
+            <select
+              value={universalForm.modelAId}
+              onChange={(e) => setUniversalForm({ ...universalForm, modelAId: e.target.value })}
+              className="w-full rounded-lg border border-arena-border bg-arena-elevated px-2 py-2 text-sm text-arena-text outline-none focus:border-arena-accent"
+            >
+              {modelOptions.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="mb-1.5 block text-xs text-arena-muted">Model B</label>
+            <select
+              value={universalForm.modelBId}
+              onChange={(e) => setUniversalForm({ ...universalForm, modelBId: e.target.value })}
+              className="w-full rounded-lg border border-arena-border bg-arena-elevated px-2 py-2 text-sm text-arena-text outline-none focus:border-arena-accent"
+            >
+              {modelOptions.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="mb-1.5 block text-xs text-arena-muted">Wariant promptu</label>
+            <select
+              value={universalForm.promptVariant}
+              onChange={(e) =>
+                setUniversalForm({
+                  ...universalForm,
+                  promptVariant: e.target.value as PromptVariantId,
+                })
+              }
+              className="w-full rounded-lg border border-arena-border bg-arena-elevated px-2 py-2 text-sm text-arena-text outline-none focus:border-arena-accent"
+            >
+              <option value="A">A — podstawowy</option>
+              <option value="B">B — kontekst</option>
+              <option value="C">C — struktura</option>
+            </select>
+          </div>
+          <div>
+            <label className="mb-1.5 block text-xs text-arena-muted">Model sędziego</label>
+            <select
+              value={universalForm.judgeModel}
+              onChange={(e) => setUniversalForm({ ...universalForm, judgeModel: e.target.value })}
+              className="w-full rounded-lg border border-arena-border bg-arena-elevated px-2 py-2 text-sm text-arena-text outline-none focus:border-arena-accent"
+            >
+              {modelOptions.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex flex-col justify-end gap-2">
+            <label className="flex items-center gap-2 text-xs text-arena-muted">
+              <input
+                type="checkbox"
+                checked={universalForm.allTasks}
+                onChange={(e) =>
+                  setUniversalForm({ ...universalForm, allTasks: e.target.checked })
+                }
+                className="accent-blue-500"
+              />
+              Wszystkie zadania ({tasks.length})
+            </label>
+            <Button
+              className="w-full"
+              disabled={universalRunning || universalForm.modelAId === universalForm.modelBId}
+              onClick={() => void handleUniversalTest()}
+            >
+              {universalRunning ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Scale className="h-4 w-4" />
+              )}
+              {universalRunning ? 'Trwa ocena…' : 'Uruchom test uniwersalny'}
+            </Button>
+          </div>
+        </div>
+        <p className="border-t border-arena-border px-5 py-3 text-[11px] text-arena-dim">
+          Sędzia dostaje zadanie, kryteria i obie odpowiedzi jako Model A/B (bez nazw modeli). Zwraca
+          głos pairwise, rubrykę 1–5 i flagi halucynacji. To może zająć kilka minut przy pełnym
+          benchmarku (3 wywołania LLM na zadanie).
+        </p>
+      </Card>
+
       <div className="grid gap-6 xl:grid-cols-5">
         <Card className="xl:col-span-2">
           <CardHeader
@@ -214,7 +406,7 @@ export function Experiments() {
             <div>
               <label className="mb-1.5 block text-xs text-arena-muted">Modele (min. 2)</label>
               <div className="flex flex-wrap gap-2">
-                {models.map((m) => {
+                {modelOptions.map((m) => {
                   const on = form.modelIds.includes(m.id)
                   return (
                     <button
@@ -233,6 +425,15 @@ export function Experiments() {
                   )
                 })}
               </div>
+              {form.modelIds.length >= 2 && (
+                <p className="mt-2 text-[11px] text-arena-dim">
+                  {form.modelIds.length <= 4
+                    ? `Pełny round-robin: ~${
+                        (form.modelIds.length * (form.modelIds.length - 1)) / 2
+                      } par × ${form.taskIds.length || 0} zadań × ${form.trials} prób`
+                    : `Tryb okrężny (N>4): ~${form.modelIds.length} par × ${form.taskIds.length || 0} zadań × ${form.trials} prób — każdy model trafia do rankingu`}
+                </p>
+              )}
             </div>
 
             <div className="grid grid-cols-3 gap-3">
@@ -322,7 +523,20 @@ export function Experiments() {
           <CardHeader
             title="Lista eksperymentów"
             subtitle="Persistowane w SQLite"
-            action={<Badge tone="accent">{experiments.length} zapisanych</Badge>}
+            action={
+              <div className="flex items-center gap-3">
+                <label className="flex items-center gap-1.5 text-[11px] text-arena-muted">
+                  <input
+                    type="checkbox"
+                    checked={autoJudge}
+                    onChange={(e) => setAutoJudge(e.target.checked)}
+                    className="accent-blue-500"
+                  />
+                  Auto sędzia LLM przy Start
+                </label>
+                <Badge tone="accent">{experiments.length} zapisanych</Badge>
+              </div>
+            }
           />
           <div className="divide-y divide-arena-border">
             {experiments.map((exp) => {

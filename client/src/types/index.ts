@@ -136,6 +136,31 @@ export interface ServerConfig {
   baseUrl: string
   defaultModelA: string
   defaultModelB: string
+  defaultJudgeModel?: string
+}
+
+export interface JudgeResultPayload {
+  vote: VoteResult
+  rubricA: RubricScores
+  rubricB: RubricScores
+  hallucinationA: boolean
+  hallucinationB: boolean
+  rationale: string
+  judgeModel: string
+  latencyMs: number
+  costUsd: number
+}
+
+export interface UniversalJudgePayload {
+  modelAId?: string
+  modelBId?: string
+  promptVariant?: PromptVariantId
+  taskIds?: string[]
+  temperature?: number
+  maxTokens?: number
+  judgeModel?: string
+  name?: string
+  config?: { apiKey?: string; baseUrl?: string }
 }
 
 export interface GeneratePairPayload {

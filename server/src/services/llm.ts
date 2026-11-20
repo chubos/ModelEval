@@ -19,28 +19,33 @@ export interface LlmCompletionResult {
 // Ceny orientacyjne za 1M tokenów (prompt / completion w USD) dla popularnych modeli,
 // do estymacji kosztu jeśli API OpenRouter nie zwróci dokładnego kosztu
 const MODEL_PRICING: Record<string, { promptPer1M: number; completionPer1M: number }> = {
-  'google/gemini-2.5-flash': { promptPer1M: 0.075, completionPer1M: 0.3 },
-  'google/gemini-1.5-flash': { promptPer1M: 0.075, completionPer1M: 0.3 },
-  'google/gemini-1.5-pro': { promptPer1M: 1.25, completionPer1M: 5.0 },
+  'google/gemma-4-31b-it:free': { promptPer1M: 0, completionPer1M: 0 },
+  'meta-llama/llama-3.1-8b-instruct': { promptPer1M: 0.02, completionPer1M: 0.04 },
+  'openai/gpt-5-nano': { promptPer1M: 0.05, completionPer1M: 0.4 },
   'openai/gpt-4o-mini': { promptPer1M: 0.15, completionPer1M: 0.6 },
+  'deepseek/deepseek-chat': { promptPer1M: 0.26, completionPer1M: 1.03 },
+  'google/gemini-2.5-flash': { promptPer1M: 0.3, completionPer1M: 2.5 },
+  'mistralai/mistral-large-2512': { promptPer1M: 0.5, completionPer1M: 1.5 },
+  'meta-llama/llama-3.3-70b-instruct': { promptPer1M: 0.71, completionPer1M: 0.71 },
   'openai/gpt-4o': { promptPer1M: 2.5, completionPer1M: 10.0 },
-  'anthropic/claude-3.5-sonnet': { promptPer1M: 3.0, completionPer1M: 15.0 },
-  'anthropic/claude-3-haiku': { promptPer1M: 0.25, completionPer1M: 1.25 },
-  'meta-llama/llama-3.3-70b-instruct': { promptPer1M: 0.2, completionPer1M: 0.4 },
-  'deepseek/deepseek-chat': { promptPer1M: 0.14, completionPer1M: 0.28 },
+  'anthropic/claude-sonnet-4.5': { promptPer1M: 3.0, completionPer1M: 15.0 },
+  // legacy
   'mistralai/mistral-large-2411': { promptPer1M: 2.0, completionPer1M: 6.0 },
+  'google/gemini-2.5-pro': { promptPer1M: 1.25, completionPer1M: 10.0 },
 }
 
 // Mapowanie starych/uproszczonych identyfikatorów na pełne nazwy OpenRouter
 export const MODEL_ALIASES: Record<string, string> = {
   'gpt-4o': 'openai/gpt-4o',
   'gpt-4o-mini': 'openai/gpt-4o-mini',
-  'claude-3.5': 'anthropic/claude-3.5-sonnet',
-  'claude-3.5-sonnet': 'anthropic/claude-3.5-sonnet',
+  'claude-3.5': 'anthropic/claude-sonnet-4.5',
+  'claude-3.5-sonnet': 'anthropic/claude-sonnet-4.5',
+  'anthropic/claude-3.5-sonnet': 'anthropic/claude-sonnet-4.5',
   'gemini-1.5': 'google/gemini-2.5-flash',
   'gemini-2.5-flash': 'google/gemini-2.5-flash',
   'llama-3.1-70b': 'meta-llama/llama-3.3-70b-instruct',
-  'mistral-large': 'mistralai/mistral-large-2411',
+  'mistral-large': 'mistralai/mistral-large-2512',
+  'mistralai/mistral-large-2411': 'mistralai/mistral-large-2512',
   'qwen-2.5-72b': 'qwen/qwen-2.5-72b-instruct',
 }
 

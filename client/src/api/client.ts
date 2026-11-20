@@ -4,11 +4,13 @@ import type {
   CategoryStat,
   ExperimentConfig,
   GeneratePairPayload,
+  JudgeResultPayload,
   LeaderboardEntry,
   ModelInfo,
   PromptVariant,
   RubricScores,
   ServerConfig,
+  UniversalJudgePayload,
   VoteResult,
 } from '../types'
 
@@ -57,14 +59,25 @@ export const api = {
         method: 'PATCH',
         body: JSON.stringify(data),
       }),
-    run: (id: string, payload?: { config?: { apiKey?: string; baseUrl?: string } }) =>
-      request<{ experiment: ExperimentConfig; pairsCreated: ArenaPair[] }>(
-        `/api/experiments/${id}/run`,
-        {
-          method: 'POST',
-          body: JSON.stringify(payload ?? {}),
-        },
-      ),
+    run: (
+      id: string,
+      payload?: {
+        autoJudge?: boolean
+        judgeModel?: string
+        config?: { apiKey?: string; baseUrl?: string; judgeModel?: string }
+      },
+    ) =>
+      request<{
+        experiment: ExperimentConfig
+        pairsCreated: ArenaPair[]
+        judgedCount?: number
+        pairingMode?: 'full' | 'circle'
+        modelCount?: number
+        errorCount?: number
+      }>(`/api/experiments/${id}/run`, {
+        method: 'POST',
+        body: JSON.stringify(payload ?? {}),
+      }),
   },
   arena: {
     list: () => request<ArenaPair[]>('/api/arena'),
@@ -81,7 +94,41 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(payload),
       }),
+    judge: (
+      id: string,
+      payload?: { config?: { apiKey?: string; baseUrl?: string; judgeModel?: string } },
+    ) =>
+      request<{ pair: ArenaPair; judgment: JudgeResultPayload }>(`/api/arena/${id}/judge`, {
+        method: 'POST',
+        body: JSON.stringify(payload ?? {}),
+      }),
+    judgePending: (payload?: {
+      experimentId?: string
+      config?: { apiKey?: string; baseUrl?: string; judgeModel?: string }
+    }) =>
+      request<{
+        judgedCount: number
+        errorCount: number
+        results: Array<{ pair: ArenaPair; judgment: JudgeResultPayload }>
+        errors: Array<{ pairId: string; error: string }>
+      }>('/api/arena/judge-pending', {
+        method: 'POST',
+        body: JSON.stringify(payload ?? {}),
+      }),
     remove: (id: string) => request<void>(`/api/arena/${id}`, { method: 'DELETE' }),
+  },
+  judge: {
+    universal: (payload: UniversalJudgePayload) =>
+      request<{
+        experiment: ExperimentConfig
+        judgedCount: number
+        errorCount: number
+        results: Array<{ pair: ArenaPair; judgment: JudgeResultPayload }>
+        errors: Array<{ taskId: string; error: string }>
+      }>('/api/judge/universal', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }),
   },
   llm: {
     verify: (payload: { apiKey?: string; baseUrl?: string; model?: string }) =>

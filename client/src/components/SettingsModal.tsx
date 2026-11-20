@@ -34,12 +34,16 @@ const POPULAR_PROVIDERS = [
 ]
 
 const POPULAR_MODELS = [
-  'google/gemini-2.5-flash',
+  'google/gemma-4-31b-it:free',
+  'meta-llama/llama-3.1-8b-instruct',
+  'openai/gpt-5-nano',
   'openai/gpt-4o-mini',
-  'anthropic/claude-3.5-sonnet',
-  'meta-llama/llama-3.3-70b-instruct',
   'deepseek/deepseek-chat',
-  'mistralai/mistral-large-2411',
+  'google/gemini-2.5-flash',
+  'mistralai/mistral-large-2512',
+  'meta-llama/llama-3.3-70b-instruct',
+  'openai/gpt-4o',
+  'anthropic/claude-sonnet-4.5',
 ]
 
 function SettingsModalContent({ onClose }: { onClose: () => void }) {

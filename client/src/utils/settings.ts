@@ -6,7 +6,7 @@ const KEY_MODEL_A = 'modeleval_model_a'
 const KEY_MODEL_B = 'modeleval_model_b'
 
 export const DEFAULT_BASE_URL = 'https://openrouter.ai/api/v1'
-export const DEFAULT_MODEL_A = 'google/gemini-2.5-flash'
+export const DEFAULT_MODEL_A = 'google/gemma-4-31b-it:free'
 export const DEFAULT_MODEL_B = 'openai/gpt-4o-mini'
 
 export function getStoredSettings(): LlmSettings {

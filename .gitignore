@@ -17,9 +17,10 @@ dist-ssr
 .env.local
 .env.*.local
 
-# SQLite
+# SQLite — lokalna baza i WAL (snapshot demo.sqlite jest w repo)
 server/data/*.sqlite
 server/data/*.sqlite-*
+!server/data/demo.sqlite
 
 # Editor
 .vscode/*

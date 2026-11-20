@@ -189,12 +189,14 @@ export function Arena() {
   const [isGenerating, setIsGenerating] = useState(false)
   const [generateError, setGenerateError] = useState<string | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [judging, setJudging] = useState(false)
+  const [judgeNote, setJudgeNote] = useState<string | null>(null)
 
   // Inicjalizacja modeli i ustawień
   const reloadSettings = () => {
     const stored = getStoredSettings()
-    setSelectedModelA((curr) => curr || stored.modelA || 'google/gemini-2.5-flash')
-    setSelectedModelB((curr) => curr || stored.modelB || 'openai/gpt-4o-mini')
+    setSelectedModelA(stored.modelA || 'google/gemini-2.5-flash')
+    setSelectedModelB(stored.modelB || 'openai/gpt-4o-mini')
   }
 
   useEffect(() => {
@@ -334,6 +336,59 @@ export function Arena() {
     }
   }
 
+  const applyLlmJudge = async () => {
+    if (!pair) return
+    const stored = getStoredSettings()
+    setJudging(true)
+    setJudgeNote(null)
+    try {
+      const res = await api.arena.judge(pair.id, {
+        config: {
+          apiKey: stored.apiKey || undefined,
+          baseUrl: stored.baseUrl || undefined,
+        },
+      })
+      setPairs((prev) => prev.map((p, i) => (i === index ? res.pair : p)))
+      setDraftA(res.pair.rubricA ?? emptyRubric())
+      setDraftB(res.pair.rubricB ?? emptyRubric())
+      setRubricOpen(true)
+      setJudgeNote(res.judgment.rationale)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Sędzia LLM nie zadziałał')
+    } finally {
+      setJudging(false)
+    }
+  }
+
+  const judgeAllPending = async () => {
+    const stored = getStoredSettings()
+    setJudging(true)
+    setJudgeNote(null)
+    try {
+      const res = await api.arena.judgePending({
+        config: {
+          apiKey: stored.apiKey || undefined,
+          baseUrl: stored.baseUrl || undefined,
+        },
+      })
+      const refreshed = await api.arena.list()
+      setPairs(refreshed)
+      if (refreshed[index]) {
+        setDraftA(refreshed[index].rubricA ?? emptyRubric())
+        setDraftB(refreshed[index].rubricB ?? emptyRubric())
+      }
+      setJudgeNote(
+        `Sędzia ocenił ${res.judgedCount} par` +
+          (res.errorCount ? ` (${res.errorCount} błędów)` : '') +
+          '.',
+      )
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Masowa ocena nie powiodła się')
+    } finally {
+      setJudging(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex h-screen items-center justify-center gap-2 text-arena-muted">
@@ -388,6 +443,29 @@ export function Arena() {
                 </div>
                 <span className="font-mono text-xs text-arena-muted">{progress}%</span>
               </div>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={judging || !pair}
+                onClick={() => void applyLlmJudge()}
+              >
+                {judging ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Scale className="h-3.5 w-3.5" />
+                )}
+                Sędzia LLM
+              </Button>
+              {pending > 0 && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={judging}
+                  onClick={() => void judgeAllPending()}
+                >
+                  Oceń wszystkie ({pending})
+                </Button>
+              )}
               <Button
                 variant="outline"
                 size="sm"
@@ -703,6 +781,13 @@ export function Arena() {
                 </button>
               </div>
 
+              {judgeNote && (
+                <div className="mb-3 rounded-lg border border-violet-500/30 bg-violet-950/20 px-3 py-2 text-xs text-violet-200">
+                  <span className="font-medium text-violet-300">Sędzia LLM: </span>
+                  {judgeNote}
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4">
                 {voteOptions.map((opt) => {
                   const Icon = opt.icon
@@ -760,7 +845,13 @@ export function Arena() {
         </div>
       )}
 
-      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <SettingsModal
+        open={settingsOpen}
+        onClose={() => {
+          setSettingsOpen(false)
+          reloadSettings()
+        }}
+      />
     </div>
   )
 }
