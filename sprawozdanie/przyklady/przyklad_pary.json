@@ -1,0 +1,13 @@
+{
+  "id": "pair-1795168769762-rnoh",
+  "task_id": "task-007",
+  "prompt_variant": "B",
+  "model_a_id": "meta-llama/llama-3.1-8b-instruct",
+  "model_b_id": "meta-llama/llama-3.3-70b-instruct",
+  "vote": "b_wins",
+  "prompt_text": "Jesteś ekspertem ocenianym w benchmarku jakości odpowiedzi.\n\nOgraniczenia:\n- Nie wymyślaj faktów; jeśli nie wiesz, napisz „niepewne”.\n- Unikaj zbędnego wstępu i podsumowań marketingowych.\n- Max 350 słów, chyba że zadanie wymaga kodu.\n\nZadanie:\nZwróć WYŁĄCZNIE poprawny JSON (bez markdown) zgodny ze schematem: { \"userId\": number, \"roles\": string[], \"active\": boolean, \"meta\": { \"source\": string } }. Wymyśl przykładowe dane.",
+  "model_a_content": "Oto poprawny JSON zgodny ze schematem:\n\n```\n{\n  \"userId\": 123,\n  \"roles\": [\"admin\", \"moderator\"],\n  \"active\": true,\n  \"meta\": {\n    \"source\": \"przykładowe dane\"\n  }\n}\n```\n\nW tym przykładzie:\n\n* `userId` jest liczbą całkowitą (123)\n* `roles` jest tablicą ciągów (zawiera dwa elementy: \"admin\" i \"moderator\")\n* `active` jest wartością logiczną (true)\n* `meta` zawiera obiekt z jednym elementem: `source` z wartością ciągu (\"przykładowe dane\")",
+  "model_b_content": "```json\n{\n  \"userId\": 123,\n  \"roles\": [\"admin\", \"moderator\"],\n  \"active\": true,\n  \"meta\": {\n    \"source\": \"system\"\n  }\n}\n```",
+  "rubric_a": "{\"correctness\":5,\"instructionFollow\":1,\"completeness\":3,\"clarity\":3,\"verifiability\":5}",
+  "rubric_b": "{\"correctness\":5,\"instructionFollow\":5,\"completeness\":5,\"clarity\":5,\"verifiability\":5}"
+}
