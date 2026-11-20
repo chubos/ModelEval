@@ -24,14 +24,26 @@ import { Badge, Button, Card, CardHeader, Stat } from '../components/ui'
 import { exportCSV, exportJSON } from '../utils/export'
 import { formatMs, formatUsd, winRate } from '../utils/scoring'
 
-const tooltipStyle = {
-  backgroundColor: '#161e2e',
-  border: '1px solid #2a3548',
-  borderRadius: 8,
-  fontSize: 12,
+function readChartTheme() {
+  const s = getComputedStyle(document.documentElement)
+  const v = (name: string, fallback: string) => s.getPropertyValue(name).trim() || fallback
+  return {
+    grid: v('--arena-border', '#2a3548'),
+    muted: v('--arena-dim', '#5c6b82'),
+    label: v('--arena-muted', '#8b9bb4'),
+    card: v('--arena-card', '#161e2e'),
+    text: v('--arena-text', '#e8edf5'),
+    accent: v('--arena-accent', '#3b82f6'),
+    danger: v('--arena-danger', '#ef4444'),
+    success: v('--arena-success', '#22c55e'),
+    warning: v('--arena-warning', '#f59e0b'),
+    tie: v('--arena-tie', '#a78bfa'),
+    modelA: v('--arena-model-a', '#38bdf8'),
+  }
 }
 
 export function Dashboard() {
+  const [chartTheme, setChartTheme] = useState(readChartTheme)
   const [models, setModels] = useState<ModelInfo[]>([])
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([])
   const [categoryStats, setCategoryStats] = useState<CategoryStat[]>([])
@@ -48,6 +60,20 @@ export function Dashboard() {
     topModelId: string | null
     topElo: number | null
   } | null>(null)
+
+  useEffect(() => {
+    const sync = () => setChartTheme(readChartTheme())
+    window.addEventListener('modeleval-theme-changed', sync)
+    return () => window.removeEventListener('modeleval-theme-changed', sync)
+  }, [])
+
+  const tooltipStyle = {
+    backgroundColor: chartTheme.card,
+    border: `1px solid ${chartTheme.grid}`,
+    borderRadius: 8,
+    fontSize: 12,
+    color: chartTheme.text,
+  }
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -138,7 +164,7 @@ export function Dashboard() {
     <div className="animate-fade-in space-y-6 p-6">
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-500/15 text-amber-400">
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-arena-warning-soft text-arena-warning">
             <LayoutDashboard className="h-5 w-5" />
           </div>
           <div>
@@ -199,7 +225,7 @@ export function Dashboard() {
         <CardHeader
           title="Leaderboard"
           subtitle="Ranking Elo · win rate · jakość ważona"
-          action={<Medal className="h-4 w-4 text-amber-400" />}
+          action={<Medal className="h-4 w-4 text-arena-warning" />}
         />
         <div className="overflow-x-auto">
           <table className="w-full min-w-[720px] text-left text-sm">
@@ -267,11 +293,11 @@ export function Dashboard() {
           <div className="h-72 p-4">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={eloBars}>
-                <CartesianGrid stroke="#2a3548" strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="name" stroke="#5c6b82" fontSize={11} tickLine={false} />
-                <YAxis stroke="#5c6b82" fontSize={11} domain={[1000, 1350]} />
+                <CartesianGrid stroke={chartTheme.grid} strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="name" stroke={chartTheme.muted} fontSize={11} tickLine={false} />
+                <YAxis stroke={chartTheme.muted} fontSize={11} domain={[1000, 1350]} />
                 <Tooltip contentStyle={tooltipStyle} />
-                <Bar dataKey="elo" fill="#3b82f6" radius={[6, 6, 0, 0]} />
+                <Bar dataKey="elo" fill={chartTheme.accent} radius={[6, 6, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -282,9 +308,9 @@ export function Dashboard() {
           <div className="h-72 p-4">
             <ResponsiveContainer width="100%" height="100%">
               <RadarChart data={radarData}>
-                <PolarGrid stroke="#2a3548" />
-                <PolarAngleAxis dataKey="category" tick={{ fill: '#8b9bb4', fontSize: 11 }} />
-                <PolarRadiusAxis angle={30} domain={[0, 5]} tick={{ fill: '#5c6b82', fontSize: 10 }} />
+                <PolarGrid stroke={chartTheme.grid} />
+                <PolarAngleAxis dataKey="category" tick={{ fill: chartTheme.label, fontSize: 11 }} />
+                <PolarRadiusAxis angle={30} domain={[0, 5]} tick={{ fill: chartTheme.muted, fontSize: 10 }} />
                 {top3.map((entry, i) => (
                   <Radar
                     key={entry.modelId}
@@ -307,13 +333,13 @@ export function Dashboard() {
           <div className="h-72 p-4">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={categoryBars}>
-                <CartesianGrid stroke="#2a3548" strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="category" stroke="#5c6b82" fontSize={10} tickLine={false} />
-                <YAxis stroke="#5c6b82" fontSize={11} />
+                <CartesianGrid stroke={chartTheme.grid} strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="category" stroke={chartTheme.muted} fontSize={10} tickLine={false} />
+                <YAxis stroke={chartTheme.muted} fontSize={11} />
                 <Tooltip contentStyle={tooltipStyle} />
                 <Legend wrapperStyle={{ fontSize: 12 }} />
-                <Bar dataKey="score" name="Avg score" fill="#38bdf8" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="hallucinations" name="Halucynacje" fill="#ef4444" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="score" name="Avg score" fill={chartTheme.modelA} radius={[4, 4, 0, 0]} />
+                <Bar dataKey="hallucinations" name="Halucynacje" fill={chartTheme.danger} radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -329,13 +355,13 @@ export function Dashboard() {
                   winRatePct: Number((p.winRate * 100).toFixed(0)),
                 }))}
               >
-                <CartesianGrid stroke="#2a3548" strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="variant" stroke="#5c6b82" fontSize={12} />
-                <YAxis stroke="#5c6b82" fontSize={11} />
+                <CartesianGrid stroke={chartTheme.grid} strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="variant" stroke={chartTheme.muted} fontSize={12} />
+                <YAxis stroke={chartTheme.muted} fontSize={11} />
                 <Tooltip contentStyle={tooltipStyle} />
                 <Legend wrapperStyle={{ fontSize: 12 }} />
-                <Bar dataKey="avgScore" name="Avg score" fill="#a78bfa" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="winRatePct" name="Win rate %" fill="#22c55e" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="avgScore" name="Avg score" fill={chartTheme.tie} radius={[4, 4, 0, 0]} />
+                <Bar dataKey="winRatePct" name="Win rate %" fill={chartTheme.success} radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -346,13 +372,13 @@ export function Dashboard() {
           <div className="h-72 p-4">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={costOverTime}>
-                <CartesianGrid stroke="#2a3548" strokeDasharray="3 3" />
-                <XAxis dataKey="day" stroke="#5c6b82" fontSize={11} />
-                <YAxis stroke="#5c6b82" fontSize={11} />
+                <CartesianGrid stroke={chartTheme.grid} strokeDasharray="3 3" />
+                <XAxis dataKey="day" stroke={chartTheme.muted} fontSize={11} />
+                <YAxis stroke={chartTheme.muted} fontSize={11} />
                 <Tooltip contentStyle={tooltipStyle} />
                 <Legend wrapperStyle={{ fontSize: 12 }} />
-                <Line type="monotone" dataKey="cost" name="Koszt USD" stroke="#f59e0b" strokeWidth={2} />
-                <Line type="monotone" dataKey="comparisons" name="Porównania" stroke="#3b82f6" strokeWidth={2} />
+                <Line type="monotone" dataKey="cost" name="Koszt USD" stroke={chartTheme.warning} strokeWidth={2} />
+                <Line type="monotone" dataKey="comparisons" name="Porównania" stroke={chartTheme.accent} strokeWidth={2} />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -363,13 +389,13 @@ export function Dashboard() {
           <div className="h-72 p-4">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={qualityBars}>
-                <CartesianGrid stroke="#2a3548" strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="name" stroke="#5c6b82" fontSize={11} />
-                <YAxis stroke="#5c6b82" fontSize={11} />
+                <CartesianGrid stroke={chartTheme.grid} strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="name" stroke={chartTheme.muted} fontSize={11} />
+                <YAxis stroke={chartTheme.muted} fontSize={11} />
                 <Tooltip contentStyle={tooltipStyle} />
                 <Legend wrapperStyle={{ fontSize: 12 }} />
-                <Bar dataKey="hallucinations" name="Halluc. %" fill="#ef4444" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="errors" name="Error %" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="hallucinations" name="Halluc. %" fill={chartTheme.danger} radius={[4, 4, 0, 0]} />
+                <Bar dataKey="errors" name="Error %" fill={chartTheme.warning} radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>

@@ -109,7 +109,7 @@ function SettingsModalContent({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm animate-fade-in">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-arena-overlay p-4 backdrop-blur-sm animate-fade-in">
       <div className="relative w-full max-w-xl overflow-hidden rounded-2xl border border-arena-border bg-arena-card shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-arena-border px-6 py-4">
@@ -139,7 +139,7 @@ function SettingsModalContent({ onClose }: { onClose: () => void }) {
         <div className="max-h-[75vh] space-y-4 overflow-y-auto p-6">
           {/* Informacja o statusie serwera */}
           {serverConfig?.hasApiKey && !apiKey && (
-            <div className="flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-950/20 px-3.5 py-2.5 text-xs text-emerald-400">
+            <div className="flex items-center gap-2 rounded-xl border border-arena-success/30 bg-arena-success-soft px-3.5 py-2.5 text-xs text-arena-success">
               <Server className="h-4 w-4 shrink-0" />
               <span>
                 Wykryto klucz na serwerze w pliku <code className="font-mono">.env</code> (
@@ -280,8 +280,8 @@ function SettingsModalContent({ onClose }: { onClose: () => void }) {
             <div
               className={`rounded-xl border p-3 text-xs leading-relaxed ${
                 testResult.success
-                  ? 'border-emerald-500/40 bg-emerald-950/30 text-emerald-300'
-                  : 'border-red-500/40 bg-red-950/30 text-red-300'
+                  ? 'border-arena-success/40 bg-arena-success-soft text-arena-success'
+                  : 'border-arena-danger/40 bg-arena-danger-soft text-arena-danger'
               }`}
             >
               {testResult.message}

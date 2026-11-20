@@ -255,7 +255,7 @@ export function Experiments() {
     <div className="animate-fade-in space-y-6 p-6">
       <header className="flex items-start justify-between gap-4">
         <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-violet-500/15 text-violet-400">
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-arena-tie-soft text-arena-tie">
             <FlaskConical className="h-5 w-5" />
           </div>
           <div>
@@ -268,9 +268,9 @@ export function Experiments() {
       </header>
 
       {runSuccess && (
-        <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-500/40 bg-emerald-950/30 p-3.5 text-xs text-emerald-300">
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-arena-success/40 bg-arena-success-soft p-3.5 text-xs text-arena-success">
           <div className="flex items-center gap-2">
-            <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+            <CheckCircle2 className="h-4 w-4 text-arena-success shrink-0" />
             <span>{runSuccess}</span>
           </div>
           <Button size="sm" variant="outline" onClick={() => navigate('/')}>
@@ -281,8 +281,8 @@ export function Experiments() {
       )}
 
       {runError && (
-        <div className="flex items-start gap-2.5 rounded-xl border border-red-500/40 bg-red-950/30 p-3.5 text-xs text-red-300">
-          <AlertCircle className="h-4 w-4 text-red-400 shrink-0" />
+        <div className="flex items-start gap-2.5 rounded-xl border border-arena-danger/40 bg-arena-danger-soft p-3.5 text-xs text-arena-danger">
+          <AlertCircle className="h-4 w-4 text-arena-danger shrink-0" />
           <span>{runError}</span>
         </div>
       )}

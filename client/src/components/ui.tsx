@@ -47,10 +47,10 @@ export function Badge({
     neutral: 'bg-arena-elevated text-arena-muted border-arena-border',
     accent: 'bg-arena-accent-soft text-arena-accent border-arena-accent/30',
     success: 'bg-arena-success-soft text-arena-success border-arena-success/30',
-    warning: 'bg-amber-950 text-arena-warning border-amber-700/40',
+    warning: 'bg-arena-warning-soft text-arena-warning border-arena-warning/30',
     danger: 'bg-arena-danger-soft text-arena-danger border-arena-danger/30',
-    a: 'bg-sky-950 text-arena-model-a border-sky-700/40',
-    b: 'bg-orange-950 text-arena-model-b border-orange-700/40',
+    a: 'bg-arena-model-a-soft text-arena-model-a border-arena-model-a/30',
+    b: 'bg-arena-model-b-soft text-arena-model-b border-arena-model-b/30',
   }
   return (
     <span

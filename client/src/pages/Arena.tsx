@@ -66,15 +66,15 @@ const voteOptions: {
     id: 'tie',
     label: 'Remis',
     icon: Scale,
-    className: 'hover:border-violet-500/50 hover:bg-violet-950/40',
-    active: 'border-violet-500 bg-violet-950/60 text-arena-tie ring-2 ring-violet-500/40',
+    className: 'hover:border-arena-tie/50 hover:bg-arena-tie-soft',
+    active: 'border-arena-tie bg-arena-tie-soft text-arena-tie ring-2 ring-arena-tie/40',
   },
   {
     id: 'both_bad',
     label: 'Obie złe',
     icon: ThumbsDown,
-    className: 'hover:border-red-500/50 hover:bg-red-950/40',
-    active: 'border-red-500 bg-red-950/60 text-arena-danger ring-2 ring-red-500/40',
+    className: 'hover:border-arena-danger/50 hover:bg-arena-danger-soft',
+    active: 'border-arena-danger bg-arena-danger-soft text-arena-danger ring-2 ring-arena-danger/40',
   },
 ]
 
@@ -153,7 +153,7 @@ function ResponsePanel({
       </div>
       <div className="flex-1 overflow-auto p-4">
         {isError ? (
-          <div className="rounded-xl border border-red-500/30 bg-red-950/20 p-4 text-xs text-red-300">
+          <div className="rounded-xl border border-arena-danger/30 bg-arena-danger-soft p-4 text-xs text-arena-danger">
             <p className="font-semibold">Błąd podczas generowania odpowiedzi:</p>
             <p className="mt-1 whitespace-pre-wrap font-mono">{meta.error || content}</p>
           </div>
@@ -498,7 +498,7 @@ export function Arena() {
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="text-red-400 hover:bg-red-950/30 hover:text-red-300"
+                    className="text-arena-danger hover:bg-arena-danger-soft hover:text-arena-danger"
                     onClick={() => void handleDeletePair(pair.id)}
                     title="Usuń ten pojedynek"
                   >
@@ -512,12 +512,12 @@ export function Arena() {
       </header>
 
       {error && (
-        <div className="mx-6 mt-4 flex items-center justify-between rounded-xl border border-red-500/40 bg-red-950/30 p-3 text-xs text-red-300">
+        <div className="mx-6 mt-4 flex items-center justify-between rounded-xl border border-arena-danger/40 bg-arena-danger-soft p-3 text-xs text-arena-danger">
           <span>{error}</span>
           <button
             type="button"
             onClick={() => setError(null)}
-            className="text-red-400 hover:text-red-200"
+            className="text-arena-danger hover:opacity-70"
           >
             ✕
           </button>
@@ -665,8 +665,8 @@ export function Arena() {
 
           {/* Komunikat błędu generowania */}
           {generateError && (
-            <div className="flex items-start gap-3 rounded-xl border border-red-500/40 bg-red-950/30 p-3.5 text-xs text-red-300">
-              <AlertCircle className="h-4 w-4 shrink-0 text-red-400" />
+            <div className="flex items-start gap-3 rounded-xl border border-arena-danger/40 bg-arena-danger-soft p-3.5 text-xs text-arena-danger">
+              <AlertCircle className="h-4 w-4 shrink-0 text-arena-danger" />
               <div className="flex-1">
                 <p className="font-semibold">Nie udało się wygenerować odpowiedzi:</p>
                 <p className="mt-0.5">{generateError}</p>
@@ -674,7 +674,7 @@ export function Arena() {
                   <button
                     type="button"
                     onClick={() => setSettingsOpen(true)}
-                    className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-red-500/20 px-2.5 py-1 text-xs font-medium text-red-200 transition hover:bg-red-500/30"
+                    className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-arena-danger/15 px-2.5 py-1 text-xs font-medium text-arena-danger transition hover:bg-arena-danger/25"
                   >
                     <KeyRound className="h-3.5 w-3.5" />
                     Otwórz Ustawienia i podaj klucz API
@@ -782,8 +782,8 @@ export function Arena() {
               </div>
 
               {judgeNote && (
-                <div className="mb-3 rounded-lg border border-violet-500/30 bg-violet-950/20 px-3 py-2 text-xs text-violet-200">
-                  <span className="font-medium text-violet-300">Sędzia LLM: </span>
+                <div className="mb-3 rounded-lg border border-arena-tie/30 bg-arena-tie-soft px-3 py-2 text-xs text-arena-text">
+                  <span className="font-medium text-arena-tie">Sędzia LLM: </span>
                   {judgeNote}
                 </div>
               )}

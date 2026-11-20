@@ -106,7 +106,7 @@ export function Benchmark() {
     <div className="animate-fade-in space-y-6 p-6">
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-500/15 text-emerald-400">
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-arena-success-soft text-arena-success">
             <Table2 className="h-5 w-5" />
           </div>
           <div>

@@ -4,8 +4,10 @@ import {
   FlaskConical,
   KeyRound,
   LayoutDashboard,
+  Moon,
   Settings,
   Sparkles,
+  Sun,
   Swords,
   Table2,
 } from 'lucide-react'
@@ -13,6 +15,7 @@ import { api } from '../api/client'
 import { SettingsModal } from './SettingsModal'
 import { cn } from '../utils/cn'
 import { getStoredSettings } from '../utils/settings'
+import { getStoredTheme, toggleTheme, type ThemeMode } from '../utils/theme'
 
 const nav = [
   { to: '/', label: 'Arena', icon: Swords, end: true },
@@ -24,6 +27,7 @@ const nav = [
 export function Layout() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [hasKey, setHasKey] = useState(() => Boolean(getStoredSettings().apiKey.trim()))
+  const [theme, setTheme] = useState<ThemeMode>(() => getStoredTheme())
 
   useEffect(() => {
     let cancelled = false
@@ -53,6 +57,15 @@ export function Layout() {
     }
   }, [hasKey])
 
+  useEffect(() => {
+    const onTheme = (e: Event) => {
+      const mode = (e as CustomEvent<ThemeMode>).detail
+      setTheme(mode === 'light' ? 'light' : 'dark')
+    }
+    window.addEventListener('modeleval-theme-changed', onTheme)
+    return () => window.removeEventListener('modeleval-theme-changed', onTheme)
+  }, [])
+
   return (
     <div className="flex min-h-screen bg-arena-bg">
       <aside className="sticky top-0 flex h-screen w-60 shrink-0 flex-col border-r border-arena-border bg-arena-surface">
@@ -60,10 +73,19 @@ export function Layout() {
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-arena-accent/20 text-arena-accent">
             <Sparkles className="h-4 w-4" />
           </div>
-          <div>
+          <div className="min-w-0 flex-1">
             <div className="text-sm font-semibold tracking-tight text-arena-text">ModelEval</div>
             <div className="text-[10px] uppercase tracking-[0.16em] text-arena-dim">Arena LLM</div>
           </div>
+          <button
+            type="button"
+            onClick={() => setTheme(toggleTheme())}
+            title={theme === 'light' ? 'Tryb ciemny' : 'Tryb jasny'}
+            aria-label={theme === 'light' ? 'Włącz tryb ciemny' : 'Włącz tryb jasny'}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-arena-border text-arena-muted transition hover:border-arena-border-hover hover:bg-arena-elevated hover:text-arena-text"
+          >
+            {theme === 'light' ? <Moon className="h-3.5 w-3.5" /> : <Sun className="h-3.5 w-3.5" />}
+          </button>
         </div>
 
         <nav className="flex flex-1 flex-col gap-1 p-3">
@@ -102,10 +124,10 @@ export function Layout() {
               <span
                 className={cn(
                   'h-2 w-2 rounded-full',
-                  hasKey ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.6)]' : 'bg-amber-400 animate-pulse',
+                  hasKey ? 'bg-arena-success' : 'bg-arena-warning animate-pulse',
                 )}
               />
-              <span className={hasKey ? 'text-emerald-400' : 'text-amber-400'}>
+              <span className={hasKey ? 'text-arena-success' : 'text-arena-warning'}>
                 {hasKey ? 'Połączono' : 'Brak klucza'}
               </span>
             </span>
@@ -115,7 +137,7 @@ export function Layout() {
             <button
               type="button"
               onClick={() => setSettingsOpen(true)}
-              className="flex w-full items-center gap-1.5 rounded-md bg-amber-500/10 px-2.5 py-1.5 text-[11px] text-amber-300 hover:bg-amber-500/20"
+              className="flex w-full items-center gap-1.5 rounded-md bg-arena-warning-soft px-2.5 py-1.5 text-[11px] text-arena-warning hover:opacity-90"
             >
               <KeyRound className="h-3.5 w-3.5 shrink-0" />
               <span>Podaj klucz OpenRouter</span>
